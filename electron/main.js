@@ -75,7 +75,23 @@ function saveMemory(mem) {
 
 // 把「人设 + 规则 + 关于主人」拼成 system prompt
 function buildSystemPrompt(cfg) {
-  const parts = [cfg.systemPrompt || DEFAULT_SYSTEM_PROMPT];
+  const parts = [];
+  // 工具指南放最前，用强硬指令确保 v4-flash 注意到
+  parts.push(
+    '【重要：工具调用指令】\n' +
+    '你不是普通聊天AI，你是文件管理助手。遇到以下场景必须调用工具，禁止闲聊：\n' +
+    '- 问时间/日期 → get_time\n' +
+    '- 问天气 → get_weather\n' +
+    '- 「打开某应用」→ open_app\n' +
+    '- 「找/搜文件」→ search_files（按名字）或 search_in_files（搜内容）\n' +
+    '- 「看看某目录里有什么」→ list_dir\n' +
+    '- 「读/看看某个文件」→ read_file\n' +
+    '- 「整理/归类/移动文件夹（如下载文件夹）」→ 先调 list_dir 列出内容，再调 apply_moves 批量移动。不要逐个调 move_path。\n' +
+    '- 「把某文件复制/移动到某地」→ copy_path / move_path\n' +
+    '- 「删掉/删除某文件」→ delete_path（只能删文件）\n' +
+    '如果用户说「整理下载文件夹」「整理桌面」等，立即执行：1.list_dir 2.apply_moves。不要问问题，不要闲聊。'
+  );
+  parts.push(cfg.systemPrompt || DEFAULT_SYSTEM_PROMPT);
   const mem = loadMemory();
   if (mem.rules.length) {
     parts.push('【主人定的规则，必须遵守】\n' + mem.rules.map(r => '- ' + r).join('\n'));
@@ -511,6 +527,31 @@ const TOOL_DEFS = [
         required: ['path']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'apply_moves',
+      description: '批量移动/整理文件：一次性提交多条移动计划，主人只需在一个确认框里确认一次就全部执行。整理文件夹时必须用它，不要逐个调 move_path。目标上级目录不存在会自动创建（确认框里会写明）；目标已存在的条目会跳过并报告。',
+      parameters: {
+        type: 'object',
+        properties: {
+          items: {
+            type: 'array',
+            description: '移动计划，最多 50 条',
+            items: {
+              type: 'object',
+              properties: {
+                src: { type: 'string', description: '源绝对路径，必须来自 list_dir / search_files 的结果' },
+                dst: { type: 'string', description: '目标绝对路径（含文件名）' }
+              },
+              required: ['src', 'dst']
+            }
+          }
+        },
+        required: ['items']
+      }
+    }
   }
 ];
 
@@ -778,6 +819,57 @@ async function toolDeletePath(args) {
   return `已经把 ${r.path} 丢进回收站啦，随时能捞回来。`;
 }
 
+// ---------- 批量移动（整理）：一次确认执行整批 ----------
+// 确认框列出全部 源→目标 和将新建的目录
+async function confirmBatchMoves(plan) {
+  const lines = plan.items.slice(0, 30).map(it => `${it.src}\n  → ${it.dst}`);
+  if (plan.items.length > 30) lines.push(`…还有 ${plan.items.length - 30} 条`);
+  if (plan.mkdirs.length) {
+    lines.push('', '将新建这些目录：');
+    for (const d of plan.mkdirs.slice(0, 10)) lines.push('  + ' + d);
+    if (plan.mkdirs.length > 10) lines.push(`  …还有 ${plan.mkdirs.length - 10} 个`);
+  }
+  lines.push('', '是否可恢复：移动只是把文件挪位置，可以再从目标移回原位；同名文件不会被覆盖。');
+  const parent = (fileWin && !fileWin.isDestroyed()) ? fileWin
+    : (win && !win.isDestroyed() ? win : null);
+  const opts = {
+    type: 'question',
+    title: '小鲸文件助手',
+    message: `要按这个计划移动 ${plan.items.length} 项吗？`,
+    detail: lines.join('\n'),
+    buttons: ['全部执行', '取消'],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true
+  };
+  const res = parent ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts);
+  return res.response === 0;
+}
+
+async function toolApplyMoves(args) {
+  const raw = Array.isArray(args.items) ? args.items : [];
+  if (!raw.length) return '请给我移动计划 items，形如 [{src, dst}, ...]。';
+  if (raw.length > 50) return `一次最多 50 条（现在 ${raw.length} 条），请分批提交。`;
+  const plan = await fsSafe.planMoves(raw, currentRoots());
+  if (!plan.items.length) {
+    return '计划里每一条都过不了校验：\n' +
+      plan.errors.map(e => `- ${e.src} → ${e.dst}：${e.error}`).join('\n');
+  }
+  const yes = await confirmBatchMoves(plan);
+  if (!yes) return '主人取消了，我什么都没动。';
+  const res = await fsSafe.applyMoves(plan, currentRoots());
+  if (res.moved.length) logEvent('fs_op', { op: 'batch', count: res.moved.length });
+  const out = [`批量移动完成：成功 ${res.moved.length} 项` +
+    (res.mkdirs.length ? `，新建了 ${res.mkdirs.length} 个目录` : '') + '。'];
+  if (res.failed.length) {
+    out.push(`执行失败 ${res.failed.length} 项：\n` + res.failed.map(f => `- ${f.src}：${f.error}`).join('\n'));
+  }
+  if (plan.errors.length) {
+    out.push(`校验没过 ${plan.errors.length} 项：\n` + plan.errors.map(e => `- ${e.src} → ${e.dst}：${e.error}`).join('\n'));
+  }
+  return out.join('\n');
+}
+
 // 执行模型请求的工具，返回给模型看的文本结果
 async function executeTool(name, rawArgs) {
   let args = {};
@@ -796,7 +888,8 @@ async function executeTool(name, rawArgs) {
     if (name === 'copy_path') return await toolWritePath('copy', args);
     if (name === 'move_path') return await toolWritePath('move', args);
     if (name === 'delete_path') return await toolDeletePath(args);
-    return `未知工具：${name}`;
+    if (name === 'apply_moves') return await toolApplyMoves(args);
+    return `没有这个工具：${name}`;
   } catch (e) {
     return `工具执行失败：${String(e && e.message || e)}`;
   }
@@ -1087,6 +1180,89 @@ ipcMain.handle('pet:tts', async (_e, text) => {
   }
 });
 
+// ---------- 关键词硬编码：整理文件夹直接走代码，不依赖模型判断 ----------
+const ORGANIZE_WORDS = ['整理', '归类', '分类'];
+const FOLDER_WORDS = ['文件夹', '下载', '桌面', '文档', '目录'];
+
+function detectOrganizeIntent(text) {
+  const t = String(text || '').toLowerCase();
+  const hasOrganize = ORGANIZE_WORDS.some(k => t.includes(k));
+  const hasFolder = FOLDER_WORDS.some(k => t.includes(k));
+  return hasOrganize && hasFolder;
+}
+
+function guessTargetDir(text) {
+  const t = String(text || '');
+  if (t.includes('下载')) return 'downloads';
+  if (t.includes('桌面')) return 'desktop';
+  if (t.includes('文档')) return 'documents';
+  return null;
+}
+
+// 扩展名 → 分类目录
+const CATEGORY_MAP = {
+  '安装包': ['.exe', '.msi', '.dmg', '.pkg', '.deb', '.rpm'],
+  '压缩包': ['.zip', '.7z', '.rar', '.tar', '.gz', '.bz2'],
+  '文档': ['.doc', '.docx', '.pdf', '.txt', '.md', '.xls', '.xlsx', '.ppt', '.pptx'],
+  '图片': ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'],
+  '视频': ['.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv'],
+  '音频': ['.mp3', '.wav', '.flac', '.aac', '.ogg'],
+  '代码': ['.js', '.ts', '.py', '.java', '.c', '.cpp', '.h', '.go', '.rs', '.html', '.css', '.json']
+};
+
+function categorizeFile(name) {
+  const ext = path.extname(name).toLowerCase();
+  for (const [cat, exts] of Object.entries(CATEGORY_MAP)) {
+    if (exts.includes(ext)) return cat;
+  }
+  return '其他';
+}
+
+// 自动整理：list_dir → 按扩展名分类 → apply_moves（走确认框）
+async function autoOrganize(dirKey) {
+  const roots = currentRoots();
+  let targetRoot = null;
+  if (dirKey === 'downloads') {
+    targetRoot = roots.find(r => r.path.toLowerCase().includes('download'));
+  } else if (dirKey === 'desktop') {
+    targetRoot = roots.find(r => r.path.toLowerCase().includes('desktop'));
+  } else if (dirKey === 'documents') {
+    targetRoot = roots.find(r => r.path.toLowerCase().includes('document'));
+  }
+  if (!targetRoot) return { ok: false, error: '没找到对应的授权目录，请先在文件助手里添加' };
+
+  const listRes = await fsSafe.listDir(targetRoot.path, roots, { limit: 1000 });
+  if (!listRes.ok) return { ok: false, error: listRes.error };
+
+  const files = listRes.items.filter(it => !it.dir);
+  if (!files.length) return { ok: true, text: '这个目录里没有文件，不用整理', count: 0 };
+
+  const items = [];
+  for (const f of files) {
+    const cat = categorizeFile(f.name);
+    items.push({ src: f.p, dst: path.join(targetRoot.path, cat, f.name) });
+  }
+
+  const plan = await fsSafe.planMoves(items, roots);
+  if (!plan.items.length) {
+    return { ok: false, error: '没有可移动的文件：' + plan.errors.map(e => e.error).join('、') };
+  }
+
+  const yes = await confirmBatchMoves(plan);
+  if (!yes) return { ok: true, text: '主人取消了，我什么都没动', count: 0, canceled: true };
+
+  const res = await fsSafe.applyMoves(plan, roots);
+  if (res.moved.length) logEvent('fs_op', { op: 'batch', count: res.moved.length });
+
+  return {
+    ok: true,
+    text: `整理完成，移动了 ${res.moved.length} 个文件`,
+    count: res.moved.length,
+    dirs: res.mkdirs.length,
+    failed: res.failed.length
+  };
+}
+
 // 调用 DeepSeek：v4-flash / v4-pro 智能路由 + token 统计 + 预算控制 + 工具调用
 // opts.forceModel 可强制指定模型（如 'deepseek-v4-flash'）
 ipcMain.handle('pet:chat', async (_e, message, opts) => {
@@ -1100,6 +1276,45 @@ ipcMain.handle('pet:chat', async (_e, message, opts) => {
   }
 
   const text = String(message).slice(0, 2000);
+
+  // 关键词硬编码：整理文件夹直接走代码，不依赖模型判断
+  if (detectOrganizeIntent(text)) {
+    const dirKey = guessTargetDir(text);
+    if (dirKey) {
+      const result = await autoOrganize(dirKey);
+      // 让模型用人格化语言总结执行结果
+      const summaryPrompt = `我刚执行完文件整理操作。结果：${result.ok ? (result.canceled ? result.text : `${result.text}，新建了 ${result.dirs} 个分类目录`) : `失败：${result.error}`}。请用一句话（不超过30字）向主人汇报，保持你平时傲娇可爱的语气。`;
+
+      const summaryMessages = [
+        { role: 'system', content: buildSystemPrompt(cfg) },
+        { role: 'user', content: summaryPrompt }
+      ];
+
+      try {
+        const res = await fetch(API_URL, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: 'deepseek-v4-flash', messages: summaryMessages, temperature: 0.85, max_tokens: 100 })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const content = data?.choices?.[0]?.message?.content;
+          if (content) {
+            appendHistory({ role: 'user', text });
+            appendHistory({ role: 'pet', text: content.trim(), model: 'deepseek-v4-flash', tokens: 0 });
+            logEvent('chat', { model: 'deepseek-v4-flash', tokens: 0, len: text.length, tools: ['apply_moves'] });
+            return { ok: true, content: content.trim(), meta: { model: 'deepseek-v4-flash', tokens: 0, tools: ['apply_moves'], monthUsage: 0, budget: 0, budgetLevel: 'ok' } };
+          }
+        }
+      } catch { /* 总结失败就用原始结果 */ }
+
+      // 总结失败，直接返回执行结果
+      appendHistory({ role: 'user', text });
+      appendHistory({ role: 'pet', text: result.text || result.error, model: 'auto', tokens: 0 });
+      return { ok: result.ok, content: result.text || result.error, meta: { model: 'auto', tokens: 0, tools: ['apply_moves'], monthUsage: 0, budget: 0, budgetLevel: 'ok' } };
+    }
+  }
+
   const deepMode = !!cfg.deepMode;
   let model = opts?.forceModel || pickModel(text, deepMode);
 

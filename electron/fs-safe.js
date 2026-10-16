@@ -382,6 +382,84 @@ async function checkTrash(target, roots) {
   return { ok: true, path: r.path, isDir: st.isDirectory() };
 }
 
+// ---------- 批量移动（整理用）：先整体校验出计划，再一次确认、顺序执行 ----------
+
+// 找出 dst 上级中还不存在的目录链（需要新建的），并要求落在 rw root 内
+function missingParents(p, roots) {
+  const missing = [];
+  let cur = path.dirname(p);
+  while (!fs.existsSync(cur)) {
+    missing.unshift(cur);
+    const parent = path.dirname(cur);
+    if (parent === cur) break;
+    cur = parent;
+  }
+  if (!missing.length) return { ok: true, missing };
+  const r = resolveInRoots(cur, roots);
+  if (!r.ok || r.root.mode !== 'rw') {
+    return { ok: false, error: '要新建的目录不在可写授权目录里：' + missing[0] };
+  }
+  return { ok: true, missing };
+}
+
+// 把模型给的 [{src,dst}, ...] 逐条校验成可执行计划；过不了的进 errors，不拖垮整批
+async function planMoves(ops, roots) {
+  const items = [];
+  const errors = [];
+  const mkdirSet = new Set();
+  const seenSrc = new Set();
+  const seenDst = new Set();
+
+  for (const raw of Array.isArray(ops) ? ops : []) {
+    const src = String(raw && raw.src || '').trim();
+    const dst = String(raw && raw.dst || '').trim();
+    const fail = (error) => errors.push({ src, dst, error });
+    if (!src || !dst) { fail('源或目标路径是空的'); continue; }
+
+    const rs = resolveInRoots(src, roots);
+    if (!rs.ok) { fail('源：' + rs.error); continue; }
+    if (rs.root.mode !== 'rw') { fail(`源在只读目录 ${rs.root.path} 里`); continue; }
+    let st;
+    try { st = await fs.promises.lstat(rs.path); } catch { fail('源不存在：' + rs.path); continue; }
+
+    const rd = resolveInRoots(dst, roots);
+    if (!rd.ok) { fail('目标：' + rd.error); continue; }
+    if (rd.root.mode !== 'rw') { fail(`目标在只读目录 ${rd.root.path} 里`); continue; }
+    if (lowerOnWin(rd.path) === lowerOnWin(rs.path)) { fail('源和目标是同一个位置'); continue; }
+    if (fs.existsSync(rd.path)) { fail('目标已存在，不覆盖：' + rd.path); continue; }
+    if (st.isDirectory() && isInside(rd.path, rs.path)) { fail('不能把目录挪进它自己的子目录'); continue; }
+
+    const srcKey = lowerOnWin(rs.path);
+    const dstKey = lowerOnWin(rd.path);
+    if (seenSrc.has(srcKey)) { fail('同一个源在计划里出现了两次'); continue; }
+    if (seenDst.has(dstKey)) { fail('两条计划指向同一个目标'); continue; }
+
+    const mp = missingParents(rd.path, roots);
+    if (!mp.ok) { fail(mp.error); continue; }
+
+    seenSrc.add(srcKey);
+    seenDst.add(dstKey);
+    for (const m of mp.missing) mkdirSet.add(m);
+    items.push({ src: rs.path, dst: rd.path, isDir: st.isDirectory() });
+  }
+  return { items, errors, mkdirs: [...mkdirSet] };
+}
+
+// 执行计划：先建目录，再逐条 move（每条执行前仍重新校验，状态变了就跳过并记入 failed）
+async function applyMoves(plan, roots) {
+  const moved = [];
+  const failed = [];
+  for (const d of plan.mkdirs || []) {
+    try { await fs.promises.mkdir(d, { recursive: true }); } catch { /* 失败由后续 move 校验兜底 */ }
+  }
+  for (const it of plan.items || []) {
+    const r = await movePath(it.src, it.dst, roots);
+    if (r.ok) moved.push({ src: r.src, dst: r.dst });
+    else failed.push({ src: it.src, dst: it.dst, error: r.error });
+  }
+  return { moved, failed, mkdirs: plan.mkdirs || [] };
+}
+
 module.exports = {
   IGNORE_DIRS,
   TEXT_EXTS,
@@ -398,5 +476,7 @@ module.exports = {
   checkWrite,
   copyPath,
   movePath,
-  checkTrash
+  checkTrash,
+  planMoves,
+  applyMoves
 };

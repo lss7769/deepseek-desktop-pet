@@ -49,7 +49,8 @@ const TOOL_NAMES = {
   open_path: '打开文件',
   copy_path: '复制文件',
   move_path: '移动文件',
-  delete_path: '丢进回收站'
+  delete_path: '删除文件',
+  apply_moves: '批量整理'
 };
 
 // 每类事件的圆点颜色与文案
@@ -72,6 +73,7 @@ function describe(ev) {
     case 'fs_search':
       return { dot: 'gray', text: `翻了翻文件，找「${ev.query}」命中 ${ev.hits} 个` };
     case 'fs_op':
+      if (ev.op === 'batch') return { dot: 'teal', text: `批量整理了 ${ev.count} 个文件` };
       return { dot: 'teal', text: `${ev.op === 'move' ? '移动' : '复制'}了文件（${ev.dest || ''}）` };
     case 'fs_trash':
       return { dot: 'orange', text: `把「${ev.name || ev.path || '一个文件'}」丢进了回收站` };
