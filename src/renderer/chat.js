@@ -118,6 +118,7 @@ const ruleAddBtn = document.getElementById('rule-add-btn');
 const profileInput = document.getElementById('profile-input');
 const memorySave = document.getElementById('memory-save');
 const memoryCancel = document.getElementById('memory-cancel');
+const summaryView = document.getElementById('summary-view');
 
 let draftRules = [];
 
@@ -157,6 +158,7 @@ async function openMemoryPanel() {
   const mem = await window.petAPI.getMemory();
   draftRules = Array.isArray(mem.rules) ? mem.rules.slice() : [];
   profileInput.value = mem.profile || '';
+  summaryView.textContent = mem.summary || '（还没有积累要点，聊多了她会自动整理）';
   renderRules();
   memoryPanel.classList.remove('hidden');
   ruleInput.focus();

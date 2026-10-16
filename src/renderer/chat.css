@@ -177,6 +177,17 @@ footer {
 .panel-card textarea:focus { border-color: var(--accent); }
 #profile-input { width: 100%; resize: vertical; }
 
+.summary-view {
+  padding: 10px;
+  border-radius: 8px;
+  background: #0b1726;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .panel-actions {
   display: flex;
   justify-content: flex-end;

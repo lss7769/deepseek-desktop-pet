@@ -40,9 +40,14 @@ const memoryPath = path.join(app.getPath('userData'), 'memory.json');
 function loadMemory() {
   try {
     const m = JSON.parse(fs.readFileSync(memoryPath, 'utf8'));
-    return { rules: Array.isArray(m.rules) ? m.rules : [], profile: String(m.profile || '') };
+    return {
+      rules: Array.isArray(m.rules) ? m.rules : [],
+      profile: String(m.profile || ''),
+      summary: String(m.summary || ''),
+      summarizedCount: Number(m.summarizedCount) || 0
+    };
   } catch {
-    return { rules: [], profile: '' };
+    return { rules: [], profile: '', summary: '', summarizedCount: 0 };
   }
 }
 
@@ -59,6 +64,9 @@ function buildSystemPrompt(cfg) {
   }
   if (mem.profile.trim()) {
     parts.push('【关于主人】\n' + mem.profile.trim());
+  }
+  if (mem.summary.trim()) {
+    parts.push('【你还记得的往事（自动整理）】\n' + mem.summary.trim());
   }
   return parts.join('\n\n');
 }
@@ -151,6 +159,60 @@ function broadcast(channel, ...args) {
 
 // ---------- 上下文记忆 ----------
 const CONTEXT_MESSAGES = 6; // 每次请求带上最近 6 条历史（约 3 轮对话）
+
+// ---------- 沉淀机制：把超出上下文窗口的旧对话压缩成「往事要点」 ----------
+const DISTILL_TRIGGER = 16; // 历史超过 16 条时触发压缩
+const DISTILL_KEEP = CONTEXT_MESSAGES; // 最近 6 条保留原文，不参与压缩
+const DISTILL_MIN_BATCH = 6; // 至少积累 6 条（3 轮）才压一次，避免每句都触发
+let distilling = false;
+
+async function distillHistory(key) {
+  if (distilling || !key) return;
+  const before = loadMemory();
+  const hist = readHistory();
+  const end = hist.length - DISTILL_KEEP;
+  if (hist.length <= DISTILL_TRIGGER) return;
+  if (end - before.summarizedCount < DISTILL_MIN_BATCH) return;
+
+  distilling = true;
+  try {
+    const batch = hist.slice(before.summarizedCount, end);
+    const lines = batch
+      .map(r => (r.role === 'user' ? '主人：' : '小鲸：') + String(r.text || ''))
+      .join('\n');
+
+    const prompt = [
+      '你在帮桌面宠物「小鲸」整理长期记忆。把旧对话浓缩成不超过 120 字的要点，',
+      '只保留值得长期记住的信息（主人的身份、偏好、约定、重要事件），丢掉寒暄和废话。',
+      before.summary ? '【已有要点，请合并去重】\n' + before.summary : '',
+      '【新增对话】\n' + lines,
+      '直接输出合并后的要点，不要解释。'
+    ].filter(Boolean).join('\n\n');
+
+    const res = await fetch('https://api.deepseek.com/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'deepseek-v4-flash',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.3,
+        max_tokens: 400
+      })
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    const out = data?.choices?.[0]?.message?.content?.trim();
+    if (!out) return;
+
+    // 沉淀的花费也算进用量
+    const usage = data?.usage || {};
+    addUsage(loadConfig(), usage.prompt_tokens, usage.completion_tokens);
+    saveMemory({ ...loadMemory(), summary: out, summarizedCount: end });
+    console.log(`[distill] 压缩 ${batch.length} 条 -> ${out.length} 字（cursor=${end}）`);
+  } catch { /* 沉淀失败不影响聊天 */ } finally {
+    distilling = false;
+  }
+}
 
 // ---------- v4-pro 智能路由 ----------
 const COMPLEX_KEYWORDS = [
@@ -255,6 +317,9 @@ ipcMain.handle('pet:history-get', () => readHistory());
 
 ipcMain.handle('pet:history-clear', () => {
   clearHistory();
+  // 记录清空后，沉淀出的要点和游标一并归零
+  const mem = loadMemory();
+  saveMemory({ ...mem, summary: '', summarizedCount: 0 });
   broadcast('pet:history-clear');
   return { ok: true };
 });
@@ -263,11 +328,15 @@ ipcMain.handle('pet:history-clear', () => {
 ipcMain.handle('pet:memory-get', () => loadMemory());
 
 ipcMain.handle('pet:memory-set', (_e, mem) => {
+  const prev = loadMemory();
   const clean = {
     rules: Array.isArray(mem?.rules)
       ? mem.rules.map(String).map(s => s.trim()).filter(Boolean)
       : [],
-    profile: String(mem?.profile || '')
+    profile: String(mem?.profile || ''),
+    // 要点和游标由沉淀机制维护，面板保存时原样保留
+    summary: prev.summary,
+    summarizedCount: prev.summarizedCount
   };
   saveMemory(clean);
   return clean;
@@ -388,6 +457,9 @@ ipcMain.handle('pet:chat', async (_e, message, opts) => {
     });
 
     console.log(`[chat] model=${model} tokens=${usage.total_tokens} monthTotal=${total}/${budget}`);
+
+    // 后台沉淀：历史超阈值时把旧对话压成要点（不阻塞回复）
+    distillHistory(key);
 
     return {
       ok: true,
