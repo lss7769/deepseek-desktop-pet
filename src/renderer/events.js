@@ -31,10 +31,18 @@ function describeError(ev) {
     key_broken: 'API Key 解不开，需要重新设置',
     empty: '回复是空的（可能思考阶段耗尽了 token）',
     network: '网络请求失败',
-    tts_fail: '语音合成失败'
+    tts_fail: '语音合成失败',
+    tool_loop: '工具调用绕不出来了，只好放弃'
   };
   return map[ev.code] || `出错了（${ev.code}）`;
 }
+
+// 工具的中文名
+const TOOL_NAMES = {
+  get_current_time: '看时间',
+  get_weather: '查天气',
+  open_app: '开应用'
+};
 
 // 每类事件的圆点颜色与文案
 function describe(ev) {
@@ -51,6 +59,8 @@ function describe(ev) {
       return { dot: 'green', text: `把 ${ev.batch} 条旧对话整理成 ${ev.size} 字要点` };
     case 'clear':
       return { dot: 'orange', text: '清空了聊天记录' };
+    case 'tool':
+      return { dot: 'teal', text: `用了工具「${TOOL_NAMES[ev.name] || ev.name}」` };
     case 'error':
       return { dot: 'red', text: describeError(ev) };
     default:

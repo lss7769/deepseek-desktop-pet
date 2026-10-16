@@ -268,6 +268,112 @@ function pickModel(message, deepMode) {
   return 'deepseek-v4-flash';
 }
 
+// ---------- 工具调用（M5）：让小鲸能看时间、查天气、开应用 ----------
+const API_URL = 'https://api.deepseek.com/chat/completions';
+
+// 只允许打开这些常见应用（白名单，避免任意命令执行）
+const APP_WHITELIST = {
+  '记事本': 'notepad.exe', notepad: 'notepad.exe',
+  '计算器': 'calc.exe', calc: 'calc.exe',
+  '画图': 'mspaint.exe', paint: 'mspaint.exe',
+  '资源管理器': 'explorer.exe', explorer: 'explorer.exe',
+  vscode: 'code', '代码编辑器': 'code',
+  '浏览器': 'msedge.exe', browser: 'msedge.exe'
+};
+
+const TOOL_DEFS = [
+  {
+    type: 'function',
+    function: {
+      name: 'get_current_time',
+      description: '获取当前的日期和时间（本地时间）。',
+      parameters: { type: 'object', properties: {}, required: [] }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_weather',
+      description: '查询某个城市的实时天气。',
+      parameters: {
+        type: 'object',
+        properties: { city: { type: 'string', description: '城市名，例如「上海」「北京」' } },
+        required: ['city']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'open_app',
+      description: '在主人的电脑上打开一个常用应用。',
+      parameters: {
+        type: 'object',
+        properties: {
+          app: { type: 'string', description: '应用名，可选：记事本 / 计算器 / 画图 / 资源管理器 / vscode / 浏览器' }
+        },
+        required: ['app']
+      }
+    }
+  }
+];
+
+const WEATHER_CODES = {
+  0: '晴', 1: '晴间多云', 2: '多云', 3: '阴', 45: '雾', 48: '雾凇',
+  51: '毛毛雨', 53: '小雨', 55: '中雨', 61: '小雨', 63: '中雨', 65: '大雨',
+  66: '冻雨', 67: '冻雨', 71: '小雪', 73: '中雪', 75: '大雪', 77: '雪粒',
+  80: '阵雨', 81: '阵雨', 82: '强阵雨', 85: '阵雪', 86: '强阵雪',
+  95: '雷阵雨', 96: '雷阵雨伴冰雹', 99: '雷阵雨伴冰雹'
+};
+
+async function toolGetWeather(city) {
+  const name = String(city || '').trim() || '北京';
+  const geo = await fetch(
+    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(name)}&count=1&language=zh&format=json`
+  ).then(r => r.json());
+  const hit = geo?.results?.[0];
+  if (!hit) return `没找到城市「${name}」`;
+  const w = await fetch(
+    `https://api.open-meteo.com/v1/forecast?latitude=${hit.latitude}&longitude=${hit.longitude}` +
+    `&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m`
+  ).then(r => r.json());
+  const c = w?.current;
+  if (!c) return `查不到「${name}」的天气`;
+  const desc = WEATHER_CODES[c.weather_code] || '未知';
+  return `${hit.name}：${desc}，气温 ${c.temperature_2m}°C，湿度 ${c.relative_humidity_2m}%，风速 ${c.wind_speed_10m} km/h`;
+}
+
+function toolOpenApp(app) {
+  const raw = String(app || '').trim();
+  const cmd = APP_WHITELIST[raw.toLowerCase()] || APP_WHITELIST[raw];
+  if (!cmd) return `「${raw}」不在白名单里，我只能打开：记事本、计算器、画图、资源管理器、vscode、浏览器`;
+  try {
+    const { spawn } = require('child_process');
+    const child = spawn(cmd, [], { detached: true, stdio: 'ignore', shell: true });
+    child.on('error', () => { /* 打不开就算了，别把主进程带崩 */ });
+    child.unref();
+    return `已经帮主人打开「${raw}」啦`;
+  } catch (e) {
+    return `打开「${raw}」失败：${String(e && e.message || e)}`;
+  }
+}
+
+// 执行模型请求的工具，返回给模型看的文本结果
+async function executeTool(name, rawArgs) {
+  let args = {};
+  try { args = JSON.parse(rawArgs || '{}'); } catch { /* 参数解析失败按空参数处理 */ }
+  try {
+    if (name === 'get_current_time') {
+      return `现在是 ${new Date().toLocaleString('zh-CN')}`;
+    }
+    if (name === 'get_weather') return await toolGetWeather(args.city);
+    if (name === 'open_app') return toolOpenApp(args.app);
+    return `未知工具：${name}`;
+  } catch (e) {
+    return `工具执行失败：${String(e && e.message || e)}`;
+  }
+}
+
 // ---------- 窗口 ----------
 function createWindow() {
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
@@ -466,7 +572,7 @@ ipcMain.handle('pet:tts', async (_e, text) => {
   }
 });
 
-// 调用 DeepSeek：v4-flash / v4-pro 智能路由 + token 统计 + 预算控制
+// 调用 DeepSeek：v4-flash / v4-pro 智能路由 + token 统计 + 预算控制 + 工具调用
 // opts.forceModel 可强制指定模型（如 'deepseek-v4-flash'）
 ipcMain.handle('pet:chat', async (_e, message, opts) => {
   const cfg = loadConfig();
@@ -497,67 +603,102 @@ ipcMain.handle('pet:chat', async (_e, message, opts) => {
   // 记录并广播用户消息（聊天窗口实时显示）
   appendHistory({ role: 'user', text });
 
+  const messages = [
+    { role: 'system', content: buildSystemPrompt(cfg) },
+    ...historyMessages,
+    { role: 'user', content: text }
+  ];
+
+  let promptTokens = 0;
+  let completionTokens = 0;
+  let replyTokens = 0;
+  const usedTools = [];
+  let toolsEnabled = true; // 模型若不支持工具，静默退回普通对话
+
   try {
-    const res = await fetch('https://api.deepseek.com/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${key}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: buildSystemPrompt(cfg) },
-          ...historyMessages,
-          { role: 'user', content: text }
-        ],
-        temperature: 0.85,
-        max_tokens: 800
-      })
-    });
-    if (!res.ok) {
-      logEvent('error', { code: 'api_status', status: res.status });
-      return { ok: false, error: 'api_status', status: res.status };
-    }
-    const data = await res.json();
-    const content = data?.choices?.[0]?.message?.content;
-    if (!content) {
-      logEvent('error', { code: 'empty', model });
-      return { ok: false, error: 'empty' };
-    }
+    // 可能来回多轮：模型先要求调工具，拿到结果后再回答
+    for (let round = 0; round < 3; round++) {
+      const body = { model, messages, temperature: 0.85, max_tokens: 800 };
+      if (toolsEnabled) body.tools = TOOL_DEFS;
 
-    // 累加 token 用量
-    const usage = data?.usage || {};
-    const u = addUsage(cfg, usage.prompt_tokens, usage.completion_tokens);
-    const total = u.input + u.output;
-    const budget = cfg.monthlyBudget || DEFAULT_MONTHLY_BUDGET;
+      const res = await fetch(API_URL, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${key}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+      });
 
-    // 记录并广播小鲸的回复
-    const replyTokens = usage.total_tokens || (usage.prompt_tokens + usage.completion_tokens) || 0;
-    appendHistory({
-      role: 'pet',
-      text: content.trim(),
-      model,
-      tokens: replyTokens
-    });
-    logEvent('chat', { model, tokens: replyTokens, len: text.length });
-
-    console.log(`[chat] model=${model} tokens=${usage.total_tokens} monthTotal=${total}/${budget}`);
-
-    // 后台沉淀：历史超阈值时把旧对话压成要点（不阻塞回复）
-    distillHistory(key);
-
-    return {
-      ok: true,
-      content: content.trim(),
-      meta: {
-        model,
-        tokens: usage.total_tokens || (usage.prompt_tokens + usage.completion_tokens) || 0,
-        monthUsage: total,
-        budget,
-        budgetLevel: budgetStatus(loadConfig()).level
+      if (!res.ok) {
+        if (toolsEnabled && res.status === 400) { toolsEnabled = false; continue; }
+        logEvent('error', { code: 'api_status', status: res.status });
+        return { ok: false, error: 'api_status', status: res.status };
       }
-    };
+
+      const data = await res.json();
+      const usage = data?.usage || {};
+      promptTokens += usage.prompt_tokens || 0;
+      completionTokens += usage.completion_tokens || 0;
+      replyTokens += usage.total_tokens || (usage.prompt_tokens + usage.completion_tokens) || 0;
+
+      const msg = data?.choices?.[0]?.message;
+
+      // 模型要求调工具：本地执行，把结果喂回去继续下一轮
+      if (msg && msg.tool_calls && msg.tool_calls.length) {
+        messages.push(msg);
+        for (const call of msg.tool_calls) {
+          const name = call && call.function ? call.function.name : '';
+          const result = await executeTool(name, call && call.function ? call.function.arguments : '{}');
+          usedTools.push(name);
+          logEvent('tool', { name });
+          messages.push({ role: 'tool', tool_call_id: call.id, content: String(result) });
+        }
+        continue;
+      }
+
+      const content = msg && msg.content;
+      if (!content) {
+        logEvent('error', { code: 'empty', model });
+        return { ok: false, error: 'empty' };
+      }
+
+      // 累加 token 用量
+      const u = addUsage(cfg, promptTokens, completionTokens);
+      const total = u.input + u.output;
+      const budget = cfg.monthlyBudget || DEFAULT_MONTHLY_BUDGET;
+
+      // 记录并广播小鲸的回复
+      const rec = { role: 'pet', text: content.trim(), model, tokens: replyTokens };
+      if (usedTools.length) rec.tools = usedTools;
+      appendHistory(rec);
+
+      const chatEv = { model, tokens: replyTokens, len: text.length };
+      if (usedTools.length) chatEv.tools = usedTools;
+      logEvent('chat', chatEv);
+
+      console.log(`[chat] model=${model} tokens=${replyTokens} tools=${usedTools.join(',') || '-'} monthTotal=${total}/${budget}`);
+
+      // 后台沉淀：历史超阈值时把旧对话压成要点（不阻塞回复）
+      distillHistory(key);
+
+      return {
+        ok: true,
+        content: content.trim(),
+        meta: {
+          model,
+          tokens: replyTokens,
+          tools: usedTools,
+          monthUsage: total,
+          budget,
+          budgetLevel: budgetStatus(loadConfig()).level
+        }
+      };
+    }
+
+    // 三轮下来还在要工具，认输
+    logEvent('error', { code: 'tool_loop' });
+    return { ok: false, error: 'empty' };
   } catch {
     logEvent('error', { code: 'network' });
     return { ok: false, error: 'network' };

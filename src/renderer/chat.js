@@ -17,6 +17,18 @@ function modelLabel(model) {
   return model.includes('pro') ? 'v4-pro' : 'v4-flash';
 }
 
+// 她在回答里用到的工具（查天气/看时间/开应用）
+const TOOL_NAMES = {
+  get_current_time: '看时间',
+  get_weather: '查天气',
+  open_app: '开应用'
+};
+
+function toolLabel(tools) {
+  if (!Array.isArray(tools) || !tools.length) return '';
+  return ' · ' + tools.map((t) => TOOL_NAMES[t] || t).join('/');
+}
+
 function scrollToEnd() { list.scrollTop = list.scrollHeight; }
 
 function removeEmptyHint() {
@@ -52,7 +64,7 @@ function addMsg(rec) {
   meta.className = 'meta';
   meta.textContent = isUser
     ? fmtTime(rec.ts)
-    : `${fmtTime(rec.ts)} · ${modelLabel(rec.model)}${rec.tokens ? ' · ' + rec.tokens + ' tok' : ''}`;
+    : `${fmtTime(rec.ts)} · ${modelLabel(rec.model)}${rec.tokens ? ' · ' + rec.tokens + ' tok' : ''}${toolLabel(rec.tools)}`;
 
   row.appendChild(bubble);
   row.appendChild(meta);
