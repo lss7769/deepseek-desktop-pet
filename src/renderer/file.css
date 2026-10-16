@@ -175,8 +175,8 @@ header .actions button:hover { color: var(--text); border-color: var(--accent); 
 .ops button:disabled { opacity: 0.4; cursor: default; }
 .ops button.danger:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); }
 
-/* ---------- 授权目录面板 ---------- */
-#roots-panel {
+/* ---------- 授权目录 / 目标路径面板 ---------- */
+#roots-panel, #dest-panel {
   position: fixed;
   inset: 0;
   z-index: 20;
@@ -185,7 +185,36 @@ header .actions button:hover { color: var(--text); border-color: var(--accent); 
   justify-content: center;
   background: rgba(4, 12, 22, 0.72);
 }
-#roots-panel.hidden { display: none; }
+#roots-panel.hidden, #dest-panel.hidden { display: none; }
+
+.dest-row { display: flex; gap: 8px; margin: 10px 0 0; }
+#dest-input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: #0b1726;
+  color: var(--text);
+  outline: none;
+  font-size: 12px;
+}
+#dest-input:focus { border-color: var(--accent); }
+#dest-pick {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+#dest-pick:hover { color: var(--text); border-color: var(--accent); }
+#dest-src {
+  word-break: break-all;
+  color: var(--text);
+}
 .panel-card {
   width: min(92%, 400px);
   max-height: 84%;
@@ -248,10 +277,10 @@ header .actions button:hover { color: var(--text); border-color: var(--accent); 
 }
 .tip { font-size: 11px; color: var(--muted); line-height: 1.5; margin: 6px 0 0; }
 .panel-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
-#roots-close {
+#roots-close, #dest-cancel {
   background: none;
   border: 1px solid rgba(255, 255, 255, 0.18);
   color: var(--muted);
   font-weight: 400;
 }
-#roots-close:hover { color: var(--text); border-color: var(--accent); }
+#roots-close:hover, #dest-cancel:hover { color: var(--text); border-color: var(--accent); }

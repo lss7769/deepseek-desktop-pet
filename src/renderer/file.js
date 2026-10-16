@@ -9,17 +9,28 @@ const pvSize = document.getElementById('pv-size');
 const pvBody = document.getElementById('pv-body');
 const openBtn = document.getElementById('open-btn');
 const copyBtn = document.getElementById('copy-path-btn');
+const copyToBtn = document.getElementById('copy-to-btn');
+const moveToBtn = document.getElementById('move-to-btn');
 const rootsBtn = document.getElementById('roots-btn');
 const rootsPanel = document.getElementById('roots-panel');
 const rootsList = document.getElementById('roots-list');
 const rootsAdd = document.getElementById('roots-add');
 const rootsClose = document.getElementById('roots-close');
 
+const destPanel = document.getElementById('dest-panel');
+const destTitle = document.getElementById('dest-title');
+const destSrc = document.getElementById('dest-src');
+const destInput = document.getElementById('dest-input');
+const destPick = document.getElementById('dest-pick');
+const destCancel = document.getElementById('dest-cancel');
+const destOk = document.getElementById('dest-ok');
+
 const PREVIEW_LINES = 400;
 let roots = [];
 let selected = null;
 let hits = [];
 let searchTimer = null;
+let destOp = null; // 'copy' | 'move'
 
 // 扩展名 -> 圆点颜色
 const EXT_DOT = {
@@ -165,6 +176,8 @@ async function selectHit(h) {
 
   openBtn.disabled = false;
   copyBtn.disabled = false;
+  copyToBtn.disabled = false;
+  moveToBtn.disabled = false;
   pvName.textContent = h.p.split('\\').pop();
   pvName.title = h.p;
   pvSize.textContent = fmtSize(h.s) + ' · ' + fmtTime(h.m);
@@ -275,6 +288,50 @@ rootsBtn.addEventListener('click', () => { renderRoots(); rootsPanel.classList.r
 rootsClose.addEventListener('click', () => rootsPanel.classList.add('hidden'));
 rootsPanel.addEventListener('click', (e) => { if (e.target === rootsPanel) rootsPanel.classList.add('hidden'); });
 rootsAdd.addEventListener('click', addRoots);
+
+// ---------- 复制到… / 移动至…（写操作，主进程还会弹确认框） ----------
+function openDestPanel(op) {
+  if (!selected) return;
+  destOp = op;
+  destTitle.textContent = op === 'move' ? '移动到…' : '复制到…';
+  destSrc.textContent = '源：' + selected.p;
+  destInput.value = selected.p; // 预填源路径，改文件名或换目录都行
+  destPanel.classList.remove('hidden');
+  destInput.focus();
+  destInput.select();
+}
+
+destPanel.addEventListener('click', (e) => { if (e.target === destPanel) destPanel.classList.add('hidden'); });
+destCancel.addEventListener('click', () => destPanel.classList.add('hidden'));
+
+destPick.addEventListener('click', async () => {
+  const picked = await window.petAPI.pickRoot();
+  if (!picked || !picked.length) return;
+  const dir = picked[0].replace(/[\\/]+$/, '');
+  const name = destInput.value.trim().split(/[\\/]/).pop() || (selected ? selected.p.split('\\').pop() : '');
+  destInput.value = dir + '\\' + name;
+});
+
+destOk.addEventListener('click', async () => {
+  const dst = destInput.value.trim();
+  if (!dst) { setStatus('目标路径不能为空'); return; }
+  if (!selected) { destPanel.classList.add('hidden'); return; }
+  const op = destOp || 'copy';
+  destPanel.classList.add('hidden');
+  setStatus('等你确认…');
+  const res = op === 'move'
+    ? await window.petAPI.movePath(selected.p, dst)
+    : await window.petAPI.copyPath(selected.p, dst);
+  if (!res || !res.ok) {
+    setStatus((res && res.error) || '操作失败');
+    return;
+  }
+  setStatus(`${op === 'move' ? '移动' : '复制'}好了 → ${res.dst}`);
+  if (op === 'move') doSearch(); // 源位置变了，刷新一下结果
+});
+
+copyToBtn.addEventListener('click', () => openDestPanel('copy'));
+moveToBtn.addEventListener('click', () => openDestPanel('move'));
 
 qInput.addEventListener('input', scheduleSearch);
 extSel.addEventListener('change', doSearch);

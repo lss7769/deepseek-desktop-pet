@@ -17,11 +17,13 @@ contextBridge.exposeInMainWorld('petAPI', {
   openFileWindow: () => ipcRenderer.send('pet:open-file-window'),
   getEvents: () => ipcRenderer.invoke('pet:events-get'),
   clearEvents: () => ipcRenderer.invoke('pet:events-clear'),
-  // 文件助手（只读部分）
+  // 文件助手（只读 + 受控写入）
   searchFiles: (opts) => ipcRenderer.invoke('pet:fs-search', opts),
   listDir: (dir, opts) => ipcRenderer.invoke('pet:fs-list-dir', dir, opts),
   readFile: (opts) => ipcRenderer.invoke('pet:fs-read', opts),
   openPath: (p) => ipcRenderer.invoke('pet:fs-open', p),
+  copyPath: (src, dst) => ipcRenderer.invoke('pet:fs-copy', src, dst),
+  movePath: (src, dst) => ipcRenderer.invoke('pet:fs-move', src, dst),
   revealPath: (p) => ipcRenderer.invoke('pet:fs-reveal', p),
   pickRoot: () => ipcRenderer.invoke('pet:fs-roots-pick'),
   getIndexStatus: () => ipcRenderer.invoke('pet:index-status-get'),

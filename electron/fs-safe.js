@@ -273,6 +273,90 @@ async function readFileText(filePath, roots, opts = {}) {
   return { ok: true, path: r.path, size: st.size, mtime: st.mtimeMs, text, truncated };
 }
 
+// ---------- 写入操作：复制 / 移动（绝不自动覆盖） ----------
+
+// 数一下这次操作会影响多少项（给确认框用），有上限避免卡死
+async function countEntries(p, limit = 5000) {
+  let st;
+  try { st = await fs.promises.lstat(p); } catch { return { files: 0, dirs: 0 }; }
+  if (!st.isDirectory()) return { files: 1, dirs: 0 };
+
+  let files = 0, dirs = 0;
+  const queue = [p];
+  while (queue.length && files + dirs < limit) {
+    const dir = queue.shift();
+    let items;
+    try { items = await fs.promises.readdir(dir, { withFileTypes: true }); } catch { continue; }
+    for (const it of items) {
+      if (files + dirs >= limit) break;
+      if (it.isDirectory()) { dirs++; queue.push(path.join(dir, it.name)); }
+      else files++;
+    }
+  }
+  return { files, dirs };
+}
+
+// 写入前的统一校验：src/dst 都要落在 rw 的 root 内；dst 已存在就直接拒绝（绝不覆盖）
+async function checkWrite(src, dst, roots) {
+  const rs = resolveInRoots(src, roots);
+  if (!rs.ok) return { ok: false, error: '源路径：' + rs.error };
+  if (rs.root.mode !== 'rw') return { ok: false, error: `源在只读目录 ${rs.root.path} 里，我不能改它` };
+
+  let st;
+  try { st = await fs.promises.lstat(rs.path); } catch { return { ok: false, error: '源不存在：' + rs.path }; }
+
+  const rd = resolveInRoots(dst, roots);
+  if (!rd.ok) return { ok: false, error: '目标路径：' + rd.error };
+  if (rd.root.mode !== 'rw') return { ok: false, error: `目标在只读目录 ${rd.root.path} 里，我不能往那儿写` };
+  if (lowerOnWin(rd.path) === lowerOnWin(rs.path)) return { ok: false, error: '源和目标是同一个位置，不用动' };
+  if (fs.existsSync(rd.path)) return { ok: false, error: '目标已存在，我不会覆盖它：' + rd.path };
+  if (st.isDirectory() && isInside(rd.path, rs.path)) {
+    return { ok: false, error: '不能把一个目录挪进它自己的子目录里' };
+  }
+  const parent = path.dirname(rd.path);
+  let pst;
+  try { pst = await fs.promises.stat(parent); } catch { return { ok: false, error: '目标的上级目录不存在：' + parent }; }
+  if (!pst.isDirectory()) return { ok: false, error: '目标的上级不是目录：' + parent };
+
+  return { ok: true, src: rs.path, dst: rd.path, isDir: st.isDirectory() };
+}
+
+// 复制：目录递归复制；目标已存在直接失败
+async function copyPath(src, dst, roots) {
+  const c = await checkWrite(src, dst, roots);
+  if (!c.ok) return c;
+  try {
+    await fs.promises.cp(c.src, c.dst, { recursive: true, force: false, errorOnExist: true });
+  } catch (e) {
+    return { ok: false, error: '复制失败：' + String(e && e.message || e) };
+  }
+  return { ok: true, op: 'copy', src: c.src, dst: c.dst, isDir: c.isDir };
+}
+
+// 移动：先 rename；跨盘（EXDEV）退回复制 + 删源
+async function movePath(src, dst, roots) {
+  const c = await checkWrite(src, dst, roots);
+  if (!c.ok) return c;
+  try {
+    await fs.promises.rename(c.src, c.dst);
+  } catch (e) {
+    if (!e || e.code !== 'EXDEV') {
+      return { ok: false, error: '移动失败：' + String(e && e.message || e) };
+    }
+    try {
+      await fs.promises.cp(c.src, c.dst, { recursive: true, force: false, errorOnExist: true });
+    } catch (e2) {
+      return { ok: false, error: '移动失败（跨盘复制阶段）：' + String(e2 && e2.message || e2) };
+    }
+    try {
+      await fs.promises.rm(c.src, { recursive: true, force: false });
+    } catch (e2) {
+      return { ok: false, error: '已复制到目标，但源删不掉，请手动处理：' + String(e2 && e2.message || e2) };
+    }
+  }
+  return { ok: true, op: 'move', src: c.src, dst: c.dst, isDir: c.isDir };
+}
+
 module.exports = {
   IGNORE_DIRS,
   TEXT_EXTS,
@@ -284,5 +368,9 @@ module.exports = {
   searchIndex,
   searchInFiles,
   listDir,
-  readFileText
+  readFileText,
+  countEntries,
+  checkWrite,
+  copyPath,
+  movePath
 };

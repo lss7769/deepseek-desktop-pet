@@ -47,7 +47,26 @@
     <footer class="ops">
       <button id="open-btn" disabled>打开</button>
       <button id="copy-path-btn" disabled>复制路径</button>
+      <button id="copy-to-btn" disabled>复制到…</button>
+      <button id="move-to-btn" disabled>移动至…</button>
     </footer>
+
+    <!-- 复制 / 移动：填目标路径（会走原生确认框） -->
+    <div id="dest-panel" class="hidden">
+      <div class="panel-card">
+        <h3 id="dest-title">复制到…</h3>
+        <p class="tip" id="dest-src"></p>
+        <div class="dest-row">
+          <input id="dest-input" type="text" placeholder="目标绝对路径，例如 D:\code\草稿\新名字.md" autocomplete="off" />
+          <button id="dest-pick">选目录</button>
+        </div>
+        <p class="tip">目标已存在同名文件时她不会覆盖，会直接中止。点「确定」后还会弹一次原生确认框。</p>
+        <div class="panel-actions">
+          <button id="dest-cancel">取消</button>
+          <button id="dest-ok">确定</button>
+        </div>
+      </div>
+    </div>
 
     <!-- 授权目录面板 -->
     <div id="roots-panel" class="hidden">

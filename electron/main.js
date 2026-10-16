@@ -469,6 +469,36 @@ const TOOL_DEFS = [
         required: ['path']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'copy_path',
+      description: '把一个文件或目录复制到目标位置（写入操作，会弹确认框让主人确认）。src / dst 都必须是授权目录内的绝对路径，且所在目录是可写（rw）的；目标已存在时不会覆盖，直接中止。',
+      parameters: {
+        type: 'object',
+        properties: {
+          src: { type: 'string', description: '源文件/目录的绝对路径，必须来自 search_files / list_dir 的结果' },
+          dst: { type: 'string', description: '目标绝对路径（含文件名），上级目录必须已存在' }
+        },
+        required: ['src', 'dst']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'move_path',
+      description: '把一个文件或目录移动（或重命名）到目标位置（写入操作，会弹确认框让主人确认）。src / dst 都必须是授权目录内的绝对路径，且所在目录是可写（rw）的；目标已存在时不会覆盖，直接中止。',
+      parameters: {
+        type: 'object',
+        properties: {
+          src: { type: 'string', description: '源文件/目录的绝对路径，必须来自 search_files / list_dir 的结果' },
+          dst: { type: 'string', description: '目标绝对路径（含新文件名），上级目录必须已存在' }
+        },
+        required: ['src', 'dst']
+      }
+    }
   }
 ];
 
@@ -574,6 +604,70 @@ async function toolOpenPath(args) {
   return `已经帮主人打开 ${r.path} 啦`;
 }
 
+// ---------- 写入操作的确认框（复制 / 移动） ----------
+// 文案必须含：操作类型 + 源绝对路径 + 目标绝对路径 + 是否可恢复 + 影响项数
+async function confirmWrite(op, src, dst) {
+  const verb = op === 'move' ? '移动' : '复制';
+  let detail;
+  try {
+    const c = await fsSafe.countEntries(src);
+    const total = c.files + c.dirs;
+    const what = c.dirs > 0
+      ? `${total} 项（其中 ${c.files} 个文件、${c.dirs} 个子目录）`
+      : `${c.files} 个文件`;
+    detail =
+      `源：${src}\n` +
+      `目标：${dst}\n\n` +
+      `影响范围：${what}\n` +
+      (op === 'move'
+        ? '是否可恢复：源会被移走，可以再从目标移回原位\n'
+        : '是否可恢复：源文件保持不动，随时能删掉新副本\n') +
+      '若目标位置已有同名文件，她不会覆盖，会直接中止。';
+  } catch {
+    detail = `源：${src}\n目标：${dst}`;
+  }
+  const parent = (fileWin && !fileWin.isDestroyed()) ? fileWin
+    : (win && !win.isDestroyed() ? win : null);
+  const opts = {
+    type: 'question',
+    title: '小鲸文件助手',
+    message: `要${verb}这个吗？`,
+    detail,
+    buttons: [`确认${verb}`, '取消'],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true
+  };
+  const res = parent ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts);
+  return res.response === 0;
+}
+
+// 写入操作统一入口：校验 → 确认框 → 执行 → 记日记（工具与 IPC 共用）
+async function performWrite(op, src, dst) {
+  const s = String(src || '').trim();
+  const d = String(dst || '').trim();
+  if (!s || !d) return { ok: false, error: '源路径和目标路径都要给' };
+  const chk = await fsSafe.checkWrite(s, d, currentRoots());
+  if (!chk.ok) return { ok: false, error: chk.error };
+  const yes = await confirmWrite(op, chk.src, chk.dst);
+  if (!yes) return { ok: false, canceled: true, error: '已取消' };
+  const res = op === 'move'
+    ? await fsSafe.movePath(chk.src, chk.dst, currentRoots())
+    : await fsSafe.copyPath(chk.src, chk.dst, currentRoots());
+  if (!res.ok) return { ok: false, error: res.error };
+  logEvent('fs_op', { op, dest: res.dst });
+  return { ok: true, op, src: res.src, dst: res.dst };
+}
+
+async function toolWritePath(op, args) {
+  const src = String(args.src || '').trim();
+  const dst = String(args.dst || '').trim();
+  if (!src || !dst) return '请同时给我源路径和目标路径（都要是授权目录内的绝对路径）。';
+  const r = await performWrite(op, src, dst);
+  if (!r.ok) return r.canceled ? '主人取消了，我什么都没动。' : r.error;
+  return `${op === 'move' ? '移动' : '复制'}好了：${r.src} → ${r.dst}`;
+}
+
 // 执行模型请求的工具，返回给模型看的文本结果
 async function executeTool(name, rawArgs) {
   let args = {};
@@ -589,6 +683,8 @@ async function executeTool(name, rawArgs) {
     if (name === 'list_dir') return await toolListDir(args);
     if (name === 'read_file') return await toolReadFile(args, loadConfig());
     if (name === 'open_path') return await toolOpenPath(args);
+    if (name === 'copy_path') return await toolWritePath('copy', args);
+    if (name === 'move_path') return await toolWritePath('move', args);
     return `未知工具：${name}`;
   } catch (e) {
     return `工具执行失败：${String(e && e.message || e)}`;
@@ -804,6 +900,10 @@ ipcMain.handle('pet:fs-reveal', (_e, p) => {
   shell.showItemInFolder(r.path);
   return { ok: true };
 });
+
+// 写入：复制 / 移动（UI 触发同样走确认框，与模型工具共用同一套风控）
+ipcMain.handle('pet:fs-copy', (_e, src, dst) => performWrite('copy', src, dst));
+ipcMain.handle('pet:fs-move', (_e, src, dst) => performWrite('move', src, dst));
 
 // 选择要授权的目录（原生选择框，多选）
 ipcMain.handle('pet:fs-roots-pick', async () => {
