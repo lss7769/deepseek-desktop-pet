@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>小鲸日记</title>
+    <link rel="stylesheet" href="events.css" />
+  </head>
+  <body>
+    <header>
+      <span class="title">小鲸日记</span>
+      <span class="actions">
+        <button id="clear" title="清空全部日记（不影响聊天记录）">清空日记</button>
+      </span>
+    </header>
+
+    <section class="usage-card">
+      <div class="usage-head">
+        <span>本月用量</span>
+        <span id="usage-num">–</span>
+      </div>
+      <div class="bar"><div id="usage-bar" class="bar-fill"></div></div>
+      <div class="usage-foot">
+        <span id="budget-hint">预算 –</span>
+        <span id="mode-hint">模式 –</span>
+      </div>
+    </section>
+
+    <main id="list"></main>
+
+    <script src="events.js"></script>
+  </body>
+</html>

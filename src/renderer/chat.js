@@ -106,6 +106,8 @@ clearBtn.addEventListener('click', async () => {
   clearList();
 });
 
+document.getElementById('events-btn').addEventListener('click', () => window.petAPI.openEventsWindow());
+
 window.petAPI.onHistoryAppend((rec) => addMsg(rec));
 window.petAPI.onHistoryClear(() => clearList());
 

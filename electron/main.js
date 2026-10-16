@@ -150,6 +150,44 @@ function clearHistory() {
   try { fs.writeFileSync(historyPath, '', 'utf8'); } catch { /* ignore */ }
 }
 
+// ---------- 事件日记（用量 / 声音 / 报错的时间线） ----------
+const eventsPath = path.join(app.getPath('userData'), 'events.jsonl');
+const EVENTS_MAX = 500; // 只留最近 500 条，避免文件无限增长
+
+function logEvent(type, fields) {
+  const ev = { ts: Date.now(), type, ...(fields || {}) };
+  try {
+    fs.appendFileSync(eventsPath, JSON.stringify(ev) + '\n', 'utf8');
+    trimEvents();
+  } catch { /* 记录失败不影响主流程 */ }
+  broadcast('pet:event-append', ev);
+}
+
+function trimEvents() {
+  try {
+    const lines = fs.readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean);
+    if (lines.length > EVENTS_MAX) {
+      fs.writeFileSync(eventsPath, lines.slice(-EVENTS_MAX).join('\n') + '\n', 'utf8');
+    }
+  } catch { /* ignore */ }
+}
+
+function readEvents(limit = 200) {
+  try {
+    return fs.readFileSync(eventsPath, 'utf8')
+      .split('\n').filter(Boolean)
+      .map(l => { try { return JSON.parse(l); } catch { return null; } })
+      .filter(Boolean)
+      .slice(-limit);
+  } catch {
+    return [];
+  }
+}
+
+function clearEvents() {
+  try { fs.writeFileSync(eventsPath, '', 'utf8'); } catch { /* ignore */ }
+}
+
 // 向所有窗口广播（聊天窗口可实时收到新记录）
 function broadcast(channel, ...args) {
   for (const w of BrowserWindow.getAllWindows()) {
@@ -208,6 +246,7 @@ async function distillHistory(key) {
     const usage = data?.usage || {};
     addUsage(loadConfig(), usage.prompt_tokens, usage.completion_tokens);
     saveMemory({ ...loadMemory(), summary: out, summarizedCount: end });
+    logEvent('distill', { batch: batch.length, size: out.length });
     console.log(`[distill] 压缩 ${batch.length} 条 -> ${out.length} 字（cursor=${end}）`);
   } catch { /* 沉淀失败不影响聊天 */ } finally {
     distilling = false;
@@ -286,6 +325,30 @@ function openChatWindow() {
   chatWin.on('closed', () => { chatWin = null; });
 }
 
+// ---------- 小鲸日记窗口 ----------
+let eventsWin = null;
+
+function openEventsWindow() {
+  if (eventsWin && !eventsWin.isDestroyed()) { eventsWin.show(); eventsWin.focus(); return; }
+  eventsWin = new BrowserWindow({
+    width: 460,
+    height: 600,
+    minWidth: 360,
+    minHeight: 400,
+    title: '小鲸日记',
+    backgroundColor: '#0d1b2e',
+    icon: path.join(__dirname, '..', 'src', 'assets', 'pet', 'whale-girl.ico'),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+  eventsWin.setMenuBarVisibility(false);
+  eventsWin.loadFile(path.join(__dirname, '..', 'src', 'renderer', 'events.html'));
+  eventsWin.on('closed', () => { eventsWin = null; });
+}
+
 // ---------- IPC ----------
 ipcMain.on('pet:set-ignore-mouse', (_e, ignore) => {
   if (win && !win.isDestroyed()) win.setIgnoreMouseEvents(!!ignore, { forward: true });
@@ -320,6 +383,7 @@ ipcMain.handle('pet:history-clear', () => {
   // 记录清空后，沉淀出的要点和游标一并归零
   const mem = loadMemory();
   saveMemory({ ...mem, summary: '', summarizedCount: 0 });
+  logEvent('clear');
   broadcast('pet:history-clear');
   return { ok: true };
 });
@@ -343,6 +407,17 @@ ipcMain.handle('pet:memory-set', (_e, mem) => {
 });
 
 ipcMain.on('pet:open-chat-window', () => openChatWindow());
+
+// ---------- 小鲸日记 IPC ----------
+ipcMain.handle('pet:events-get', () => readEvents());
+
+ipcMain.handle('pet:events-clear', () => {
+  clearEvents();
+  broadcast('pet:events-clear');
+  return { ok: true };
+});
+
+ipcMain.on('pet:open-events-window', () => openEventsWindow());
 
 // 聊天窗口点历史里的回复 → 让桌宠重念一遍
 ipcMain.on('pet:replay', (_e, text) => {
@@ -386,6 +461,7 @@ ipcMain.handle('pet:tts', async (_e, text) => {
     return { ok: true, data: buf.toString('base64') };
   } catch {
     ttsInstance = null; // 连接断了，下次重建
+    logEvent('error', { code: 'tts_fail' });
     return { ok: false, error: 'tts_fail' };
   }
 });
@@ -397,7 +473,9 @@ ipcMain.handle('pet:chat', async (_e, message, opts) => {
   const key = getApiKey(cfg);
   if (!key) {
     // 有密文却解不开 = 加密密钥失效（例如换了数据目录），提示重设
-    return { ok: false, error: cfg.deepseekApiKey ? 'key_broken' : 'no_key' };
+    const code = cfg.deepseekApiKey ? 'key_broken' : 'no_key';
+    logEvent('error', { code });
+    return { ok: false, error: code };
   }
 
   const text = String(message).slice(0, 2000);
@@ -437,10 +515,16 @@ ipcMain.handle('pet:chat', async (_e, message, opts) => {
         max_tokens: 800
       })
     });
-    if (!res.ok) return { ok: false, error: 'api_status', status: res.status };
+    if (!res.ok) {
+      logEvent('error', { code: 'api_status', status: res.status });
+      return { ok: false, error: 'api_status', status: res.status };
+    }
     const data = await res.json();
     const content = data?.choices?.[0]?.message?.content;
-    if (!content) return { ok: false, error: 'empty' };
+    if (!content) {
+      logEvent('error', { code: 'empty', model });
+      return { ok: false, error: 'empty' };
+    }
 
     // 累加 token 用量
     const usage = data?.usage || {};
@@ -449,12 +533,14 @@ ipcMain.handle('pet:chat', async (_e, message, opts) => {
     const budget = cfg.monthlyBudget || DEFAULT_MONTHLY_BUDGET;
 
     // 记录并广播小鲸的回复
+    const replyTokens = usage.total_tokens || (usage.prompt_tokens + usage.completion_tokens) || 0;
     appendHistory({
       role: 'pet',
       text: content.trim(),
       model,
-      tokens: usage.total_tokens || (usage.prompt_tokens + usage.completion_tokens) || 0
+      tokens: replyTokens
     });
+    logEvent('chat', { model, tokens: replyTokens, len: text.length });
 
     console.log(`[chat] model=${model} tokens=${usage.total_tokens} monthTotal=${total}/${budget}`);
 
@@ -473,6 +559,7 @@ ipcMain.handle('pet:chat', async (_e, message, opts) => {
       }
     };
   } catch {
+    logEvent('error', { code: 'network' });
     return { ok: false, error: 'network' };
   }
 });
@@ -491,6 +578,7 @@ function showContextMenu() {
     { label: '和我聊天…', click: () => win.webContents.send('pet:open-chat') },
     { label: 'Flash 快聊…（v4-flash）', click: () => win.webContents.send('pet:open-chat-flash') },
     { label: '打开聊天窗口…', click: () => openChatWindow() },
+    { label: '小鲸日记…', click: () => openEventsWindow() },
     { label: '设置 API Key…', click: () => win.webContents.send('pet:set-key') },
     {
       label: '换个声音',
@@ -501,6 +589,7 @@ function showContextMenu() {
         click: () => {
           saveConfig({ ...loadConfig(), ttsVoice: v.id });
           ttsInstance = null; // 下次用新声音重建
+          logEvent('voice', { voice: v.id, name: v.name });
           win.webContents.send('pet:voice-changed');
         }
       }))
@@ -513,6 +602,7 @@ function showContextMenu() {
       checked: !!cfg.deepMode,
       click: (item) => {
         saveConfig({ ...loadConfig(), deepMode: item.checked });
+        logEvent('deepMode', { on: !!item.checked });
         win.webContents.send('pet:say', item.checked ? '好的，我会用更聪明的 v4-pro 回答～' : '切回省电模式啦');
       }
     },
@@ -523,7 +613,7 @@ function showContextMenu() {
     },
     { type: 'separator' },
     { label: '再来一句', click: () => win.webContents.send('pet:say-random') },
-    { label: '清空聊天记录', click: () => { clearHistory(); broadcast('pet:history-clear'); } },
+    { label: '清空聊天记录', click: () => { clearHistory(); logEvent('clear'); broadcast('pet:history-clear'); } },
     { type: 'separator' },
     { label: '退出', click: () => app.quit() }
   ]).popup({ window: win });
@@ -533,6 +623,7 @@ ipcMain.on('pet:context-menu', showContextMenu);
 
 app.whenReady().then(() => {
   createWindow();
+  logEvent('start');
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

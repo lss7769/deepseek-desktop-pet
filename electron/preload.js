@@ -13,6 +13,9 @@ contextBridge.exposeInMainWorld('petAPI', {
   getMemory: () => ipcRenderer.invoke('pet:memory-get'),
   setMemory: (mem) => ipcRenderer.invoke('pet:memory-set', mem),
   openChatWindow: () => ipcRenderer.send('pet:open-chat-window'),
+  openEventsWindow: () => ipcRenderer.send('pet:open-events-window'),
+  getEvents: () => ipcRenderer.invoke('pet:events-get'),
+  clearEvents: () => ipcRenderer.invoke('pet:events-clear'),
   replay: (text) => ipcRenderer.send('pet:replay', text),
   onHistoryAppend: (cb) => ipcRenderer.on('pet:history-append', (_e, rec) => cb(rec)),
   onHistoryClear: (cb) => ipcRenderer.on('pet:history-clear', () => cb()),
@@ -22,5 +25,7 @@ contextBridge.exposeInMainWorld('petAPI', {
   onOpenChatFlash: (cb) => ipcRenderer.on('pet:open-chat-flash', () => cb()),
   onSetKey: (cb) => ipcRenderer.on('pet:set-key', () => cb()),
   onSetMuted: (cb) => ipcRenderer.on('pet:set-muted', (_e, m) => cb(m)),
-  onVoiceChanged: (cb) => ipcRenderer.on('pet:voice-changed', () => cb())
+  onVoiceChanged: (cb) => ipcRenderer.on('pet:voice-changed', () => cb()),
+  onEventAppend: (cb) => ipcRenderer.on('pet:event-append', (_e, ev) => cb(ev)),
+  onEventClear: (cb) => ipcRenderer.on('pet:events-clear', () => cb())
 });
