@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>小鲸文件助手</title>
+    <link rel="stylesheet" href="file.css" />
+  </head>
+  <body>
+    <header>
+      <span class="title">文件助手</span>
+      <span class="actions">
+        <button id="roots-btn" title="添加 / 移除她可以访问的目录">授权目录</button>
+      </span>
+    </header>
+
+    <section class="search-bar">
+      <input id="q" type="text" placeholder="搜文件名或路径…" autocomplete="off" />
+      <select id="ext">
+        <option value="">全部类型</option>
+        <option value=".md">Markdown</option>
+        <option value=".txt">文本</option>
+        <option value=".py">Python</option>
+        <option value=".js">JS</option>
+        <option value=".c">C</option>
+        <option value=".cpp">C++</option>
+        <option value=".json">JSON</option>
+        <option value=".csv">CSV</option>
+        <option value=".pdf">PDF</option>
+        <option value=".png">PNG</option>
+        <option value=".jpg">JPG</option>
+      </select>
+      <select id="root"></select>
+    </section>
+
+    <div id="status" class="status">索引准备中…</div>
+
+    <main id="list"></main>
+
+    <section class="preview">
+      <div class="preview-head">
+        <span id="pv-name" class="muted">选中文件后可预览</span>
+        <span id="pv-size" class="muted"></span>
+      </div>
+      <pre id="pv-body"></pre>
+    </section>
+
+    <footer class="ops">
+      <button id="open-btn" disabled>打开</button>
+      <button id="copy-path-btn" disabled>复制路径</button>
+    </footer>
+
+    <!-- 授权目录面板 -->
+    <div id="roots-panel" class="hidden">
+      <div class="panel-card">
+        <h3>授权目录</h3>
+        <div id="roots-list"></div>
+        <div class="add-row"><button id="roots-add">+ 添加目录</button></div>
+        <p class="tip">只有列表里的目录她才能访问。ro = 只读，rw = 可读写。</p>
+        <div class="panel-actions">
+          <button id="roots-close">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="file.js"></script>
+  </body>
+</html>

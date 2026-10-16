@@ -17,11 +17,16 @@ function modelLabel(model) {
   return model.includes('pro') ? 'v4-pro' : 'v4-flash';
 }
 
-// 她在回答里用到的工具（查天气/看时间/开应用）
+// 她在回答里用到的工具（查天气/看时间/开应用/找文件…）
 const TOOL_NAMES = {
   get_current_time: '看时间',
   get_weather: '查天气',
-  open_app: '开应用'
+  open_app: '开应用',
+  search_files: '找文件',
+  search_in_files: '搜内容',
+  list_dir: '列目录',
+  read_file: '读文件',
+  open_path: '打开文件'
 };
 
 function toolLabel(tools) {
@@ -119,6 +124,7 @@ clearBtn.addEventListener('click', async () => {
 });
 
 document.getElementById('events-btn').addEventListener('click', () => window.petAPI.openEventsWindow());
+document.getElementById('files-btn').addEventListener('click', () => window.petAPI.openFileWindow());
 
 window.petAPI.onHistoryAppend((rec) => addMsg(rec));
 window.petAPI.onHistoryClear(() => clearList());

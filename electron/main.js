@@ -1,6 +1,7 @@
-const { app, BrowserWindow, Menu, ipcMain, screen, safeStorage } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, screen, safeStorage, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const fsSafe = require('./fs-safe');
 const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
 
 // 运行时数据存放在独立目录，避免写向 %APPDATA%（自用，便于清理与迁移）
@@ -23,11 +24,28 @@ let muted = false;
 const configPath = path.join(app.getPath('userData'), 'config.json');
 
 function loadConfig() {
+  let cfg;
   try {
-    return JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
   } catch {
-    return {};
+    cfg = {};
   }
+  // 文件助手相关默认值：缺失时补上（首次运行即为默认授权目录）
+  if (!Array.isArray(cfg.fileRoots)) cfg.fileRoots = defaultFileRoots();
+  if (typeof cfg.fileContentToModel !== 'boolean') cfg.fileContentToModel = true;
+  return cfg;
+}
+
+// 默认授权目录：代码目录 + 桌面 / 文档 / 下载
+function defaultFileRoots() {
+  const list = ['D:\\code'];
+  for (const k of ['desktop', 'documents', 'downloads']) {
+    try { list.push(app.getPath(k)); } catch { /* 该目录取不到就跳过 */ }
+  }
+  const seen = new Set();
+  return list
+    .filter(p => p && !seen.has(p.toLowerCase()) && seen.add(p.toLowerCase()))
+    .map(p => ({ path: p, mode: 'rw' }));
 }
 
 function saveConfig(cfg) {
@@ -166,9 +184,14 @@ function logEvent(type, fields) {
 function trimEvents() {
   try {
     const lines = fs.readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean);
-    if (lines.length > EVENTS_MAX) {
-      fs.writeFileSync(eventsPath, lines.slice(-EVENTS_MAX).join('\n') + '\n', 'utf8');
+    if (lines.length <= EVENTS_MAX) return;
+    // 破坏性操作（fs_trash）永久留痕，不参与裁剪；其余按最近 EVENTS_MAX 条保留
+    const keep = new Set();
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].includes('"type":"fs_trash"')) keep.add(i);
     }
+    for (let i = lines.length - 1; i >= 0 && keep.size < EVENTS_MAX; i--) keep.add(i);
+    fs.writeFileSync(eventsPath, lines.filter((_, i) => keep.has(i)).join('\n') + '\n', 'utf8');
   } catch { /* ignore */ }
 }
 
@@ -192,6 +215,61 @@ function clearEvents() {
 function broadcast(channel, ...args) {
   for (const w of BrowserWindow.getAllWindows()) {
     if (!w.isDestroyed()) w.webContents.send(channel, ...args);
+  }
+}
+
+// ---------- 文件助手：白名单目录 + 文件名索引 ----------
+const fileIndexPath = path.join(app.getPath('userData'), 'file-index.json');
+let fileEntries = [];
+let indexTs = 0;
+let indexScanning = false;
+
+// 当前授权目录（补上实体路径，防 junction 外逃）
+function currentRoots() {
+  return fsSafe.normalizeRoots(loadConfig().fileRoots);
+}
+
+function fmtSize(n) {
+  if (!n) return '0 B';
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+function fmtTime(ts) {
+  const d = new Date(ts || Date.now());
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function loadIndexFromDisk() {
+  try {
+    const j = JSON.parse(fs.readFileSync(fileIndexPath, 'utf8'));
+    if (Array.isArray(j.entries)) { fileEntries = j.entries; indexTs = Number(j.ts) || 0; }
+  } catch { /* 还没建过索引就算了 */ }
+}
+
+function saveIndexToDisk() {
+  try {
+    fs.writeFileSync(fileIndexPath, JSON.stringify({ ts: indexTs, entries: fileEntries }), 'utf8');
+  } catch { /* 索引写盘失败不影响使用 */ }
+}
+
+// 异步扫描所有授权目录，分批让出主线程，过程中广播进度
+async function rebuildIndex() {
+  if (indexScanning) return;
+  indexScanning = true;
+  broadcast('pet:index-progress', { scanning: true, count: fileEntries.length });
+  try {
+    const res = await fsSafe.buildIndex(currentRoots(), {
+      onProgress: (count, root) => broadcast('pet:index-progress', { scanning: true, count, root })
+    });
+    fileEntries = res.entries;
+    indexTs = res.ts;
+    saveIndexToDisk();
+  } catch { /* 扫描失败保留旧索引 */ } finally {
+    indexScanning = false;
+    broadcast('pet:index-progress', { scanning: false, count: fileEntries.length, ts: indexTs });
   }
 }
 
@@ -315,6 +393,82 @@ const TOOL_DEFS = [
         required: ['app']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search_files',
+      description: '在主人授权的目录里按文件名/路径搜索文件（只读）。返回真实路径清单，供后续 read_file 使用。',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: '关键词，会匹配文件名或路径' },
+          dir: { type: 'string', description: '可选，限定搜索的绝对目录（必须是授权目录内）' },
+          ext: { type: 'string', description: '可选，限定扩展名，例如 .md / .py / .txt' },
+          limit: { type: 'integer', description: '可选，返回条数上限，默认 30' }
+        },
+        required: ['query']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search_in_files',
+      description: '在文件内容里搜索关键词（只读，仅文本文件，较慢）。返回命中的文件路径、行号和该行内容。',
+      parameters: {
+        type: 'object',
+        properties: {
+          keyword: { type: 'string', description: '要搜索的关键词' },
+          dir: { type: 'string', description: '可选，限定搜索的绝对目录（必须是授权目录内）' },
+          ext: { type: 'string', description: '可选，限定扩展名，例如 .py' },
+          limit: { type: 'integer', description: '可选，命中条数上限，默认 20' }
+        },
+        required: ['keyword']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_dir',
+      description: '列出某个目录下的文件与子目录（只读）。dir 必须是授权目录内的绝对路径。',
+      parameters: {
+        type: 'object',
+        properties: {
+          dir: { type: 'string', description: '要列出的绝对目录路径' },
+          limit: { type: 'integer', description: '可选，条数上限，默认 100' }
+        },
+        required: ['dir']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_file',
+      description: '读取一个文本文件的内容（只读，最多 256KB）。path 必须来自 search_files / list_dir 返回的真实路径，不要自己编造。',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: '文件的绝对路径，必须来自搜索结果' },
+          maxChars: { type: 'integer', description: '可选，最多返回多少字符，默认 4000' }
+        },
+        required: ['path']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'open_path',
+      description: '用系统默认程序打开一个文件或文件夹（只读，不会修改文件）。path 必须是授权目录内的真实路径。',
+      parameters: {
+        type: 'object',
+        properties: { path: { type: 'string', description: '要打开的绝对路径' } },
+        required: ['path']
+      }
+    }
   }
 ];
 
@@ -358,6 +512,68 @@ function toolOpenApp(app) {
   }
 }
 
+// ---------- 文件助手的只读工具实现 ----------
+function toolSearchFiles(args) {
+  const query = String(args.query || '').trim();
+  if (!query) return '请给我一个搜索关键词。';
+  const hits = fsSafe.searchIndex(fileEntries, query, {
+    ext: args.ext, dir: args.dir, limit: args.limit || 30
+  });
+  logEvent('fs_search', { query: query.slice(0, 40), hits: hits.length });
+  if (!hits.length) return `没找到和「${query}」匹配的文件。可以换个关键词或去掉类型限制。`;
+  return `找到 ${hits.length} 个文件（以下是真实路径，可直接给 read_file 用）：\n` +
+    hits.map((h, i) => `${i + 1}. ${h.p}  （${fmtSize(h.s)}，${fmtTime(h.m)}）`).join('\n');
+}
+
+async function toolSearchInFiles(args) {
+  const keyword = String(args.keyword || '').trim();
+  if (!keyword) return '请给我一个要搜索的关键词。';
+  const res = await fsSafe.searchInFiles(currentRoots(), keyword, {
+    dir: args.dir, ext: args.ext, limit: args.limit || 20
+  });
+  if (res && res.error) return res.error;
+  logEvent('fs_search', { query: keyword.slice(0, 40), hits: res.length });
+  if (!res.length) return `文件内容里没找到「${keyword}」。`;
+  return `在 ${res.length} 个文件里找到「${keyword}」：\n` +
+    res.map((h, i) => `${i + 1}. ${h.p}:${h.line}\n   ${h.snippet}`).join('\n');
+}
+
+async function toolListDir(args) {
+  const dir = String(args.dir || '').trim();
+  if (!dir) return '请给我一个要列出的目录路径。';
+  const res = await fsSafe.listDir(dir, currentRoots(), { limit: args.limit || 100 });
+  if (!res.ok) return res.error;
+  if (!res.items.length) return `目录 ${res.path} 是空的。`;
+  return `目录 ${res.path} 下有 ${res.items.length} 项${res.truncated ? '（只列了前面一部分）' : ''}：\n` +
+    res.items.map((it, i) =>
+      `${i + 1}. ${it.dir ? '[目录] ' : ''}${it.name}${it.dir ? '' : `  （${fmtSize(it.s)}，${fmtTime(it.m)}）`}`
+    ).join('\n');
+}
+
+async function toolReadFile(args, cfg) {
+  const p = String(args.path || '').trim();
+  if (!p) return '请给我一个文件路径。';
+  const res = await fsSafe.readFileText(p, currentRoots(), { maxChars: args.maxChars || 4000 });
+  if (!res.ok) return res.error;
+  // 隐私开关：关掉后只回文件名 + 前 200 字摘要，不把正文交给模型
+  if (cfg.fileContentToModel === false) {
+    return `文件 ${path.basename(res.path)}（${fmtSize(res.size)}）的内容已按隐私设置隐藏，` +
+      `只能给你开头 200 字参考：${res.text.slice(0, 200)}…`;
+  }
+  return `文件：${res.path}（${fmtSize(res.size)}，改于 ${fmtTime(res.mtime)}）\n` +
+    `内容${res.truncated ? '（已截断）' : ''}：\n` + res.text;
+}
+
+async function toolOpenPath(args) {
+  const p = String(args.path || '').trim();
+  if (!p) return '请给我一个要打开的文件或目录路径。';
+  const r = fsSafe.resolveInRoots(p, currentRoots());
+  if (!r.ok) return r.error;
+  const err = await shell.openPath(r.path);
+  if (err) return `打不开 ${r.path}：${err}`;
+  return `已经帮主人打开 ${r.path} 啦`;
+}
+
 // 执行模型请求的工具，返回给模型看的文本结果
 async function executeTool(name, rawArgs) {
   let args = {};
@@ -368,6 +584,11 @@ async function executeTool(name, rawArgs) {
     }
     if (name === 'get_weather') return await toolGetWeather(args.city);
     if (name === 'open_app') return toolOpenApp(args.app);
+    if (name === 'search_files') return toolSearchFiles(args);
+    if (name === 'search_in_files') return await toolSearchInFiles(args);
+    if (name === 'list_dir') return await toolListDir(args);
+    if (name === 'read_file') return await toolReadFile(args, loadConfig());
+    if (name === 'open_path') return await toolOpenPath(args);
     return `未知工具：${name}`;
   } catch (e) {
     return `工具执行失败：${String(e && e.message || e)}`;
@@ -455,6 +676,32 @@ function openEventsWindow() {
   eventsWin.on('closed', () => { eventsWin = null; });
 }
 
+// ---------- 文件助手窗口 ----------
+let fileWin = null;
+
+function openFileWindow() {
+  if (fileWin && !fileWin.isDestroyed()) { fileWin.show(); fileWin.focus(); rebuildIndex(); return; }
+  fileWin = new BrowserWindow({
+    width: 460,
+    height: 620,
+    minWidth: 380,
+    minHeight: 480,
+    title: '小鲸文件助手',
+    backgroundColor: '#0d1b2e',
+    icon: path.join(__dirname, '..', 'src', 'assets', 'pet', 'whale-girl.ico'),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+  fileWin.setMenuBarVisibility(false);
+  fileWin.loadFile(path.join(__dirname, '..', 'src', 'renderer', 'file.html'));
+  fileWin.on('closed', () => { fileWin = null; });
+  // 打开窗口时刷新一次索引（按目录 mtime 的思路，全量异步重扫，代价可接受）
+  rebuildIndex();
+}
+
 // ---------- IPC ----------
 ipcMain.on('pet:set-ignore-mouse', (_e, ignore) => {
   if (win && !win.isDestroyed()) win.setIgnoreMouseEvents(!!ignore, { forward: true });
@@ -524,6 +771,60 @@ ipcMain.handle('pet:events-clear', () => {
 });
 
 ipcMain.on('pet:open-events-window', () => openEventsWindow());
+
+// ---------- 文件助手 IPC（只读部分） ----------
+ipcMain.handle('pet:fs-search', (_e, opts) => {
+  const o = opts || {};
+  if (!fileEntries.length) return { ok: false, error: '索引还没建好，稍等一下再试' };
+  const hits = fsSafe.searchIndex(fileEntries, o.query, {
+    ext: o.ext, dir: o.dir, limit: o.limit || 50
+  });
+  return { ok: true, hits, total: fileEntries.length };
+});
+
+ipcMain.handle('pet:fs-list-dir', async (_e, dir, opts) => {
+  return await fsSafe.listDir(dir, currentRoots(), opts || {});
+});
+
+ipcMain.handle('pet:fs-read', async (_e, opts) => {
+  const o = opts || {};
+  return await fsSafe.readFileText(o.path, currentRoots(), { maxChars: o.maxChars });
+});
+
+ipcMain.handle('pet:fs-open', async (_e, p) => {
+  const r = fsSafe.resolveInRoots(p, currentRoots());
+  if (!r.ok) return { ok: false, error: r.error };
+  const err = await shell.openPath(r.path);
+  return err ? { ok: false, error: err } : { ok: true, path: r.path };
+});
+
+ipcMain.handle('pet:fs-reveal', (_e, p) => {
+  const r = fsSafe.resolveInRoots(p, currentRoots());
+  if (!r.ok) return { ok: false, error: r.error };
+  shell.showItemInFolder(r.path);
+  return { ok: true };
+});
+
+// 选择要授权的目录（原生选择框，多选）
+ipcMain.handle('pet:fs-roots-pick', async () => {
+  const opts = {
+    title: '选择要授权给小鲸的目录',
+    properties: ['openDirectory', 'multiSelections']
+  };
+  const res = fileWin && !fileWin.isDestroyed()
+    ? await dialog.showOpenDialog(fileWin, opts)
+    : await dialog.showOpenDialog(opts);
+  if (res.canceled) return [];
+  return res.filePaths;
+});
+
+ipcMain.handle('pet:index-status-get', () => ({
+  scanning: indexScanning,
+  count: fileEntries.length,
+  ts: indexTs
+}));
+
+ipcMain.on('pet:open-file-window', () => openFileWindow());
 
 // 聊天窗口点历史里的回复 → 让桌宠重念一遍
 ipcMain.on('pet:replay', (_e, text) => {
@@ -720,6 +1021,7 @@ function showContextMenu() {
     { label: 'Flash 快聊…（v4-flash）', click: () => win.webContents.send('pet:open-chat-flash') },
     { label: '打开聊天窗口…', click: () => openChatWindow() },
     { label: '小鲸日记…', click: () => openEventsWindow() },
+    { label: '文件助手…（找文件）', click: () => openFileWindow() },
     { label: '设置 API Key…', click: () => win.webContents.send('pet:set-key') },
     {
       label: '换个声音',
@@ -765,6 +1067,9 @@ ipcMain.on('pet:context-menu', showContextMenu);
 app.whenReady().then(() => {
   createWindow();
   logEvent('start');
+  // 启动后台异步建一次文件名索引（不阻塞桌宠显示）
+  loadIndexFromDisk();
+  setTimeout(rebuildIndex, 1500);
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

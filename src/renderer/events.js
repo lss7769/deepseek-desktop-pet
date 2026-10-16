@@ -41,7 +41,12 @@ function describeError(ev) {
 const TOOL_NAMES = {
   get_current_time: '看时间',
   get_weather: '查天气',
-  open_app: '开应用'
+  open_app: '开应用',
+  search_files: '找文件',
+  search_in_files: '搜内容',
+  list_dir: '列目录',
+  read_file: '读文件',
+  open_path: '打开文件'
 };
 
 // 每类事件的圆点颜色与文案
@@ -61,6 +66,12 @@ function describe(ev) {
       return { dot: 'orange', text: '清空了聊天记录' };
     case 'tool':
       return { dot: 'teal', text: `用了工具「${TOOL_NAMES[ev.name] || ev.name}」` };
+    case 'fs_search':
+      return { dot: 'gray', text: `翻了翻文件，找「${ev.query}」命中 ${ev.hits} 个` };
+    case 'fs_op':
+      return { dot: 'teal', text: `${ev.op === 'move' ? '移动' : '复制'}了文件（${ev.dest || ''}）` };
+    case 'fs_trash':
+      return { dot: 'orange', text: `把「${ev.name || ev.path || '一个文件'}」丢进了回收站` };
     case 'error':
       return { dot: 'red', text: describeError(ev) };
     default:

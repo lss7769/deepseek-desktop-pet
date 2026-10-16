@@ -14,8 +14,17 @@ contextBridge.exposeInMainWorld('petAPI', {
   setMemory: (mem) => ipcRenderer.invoke('pet:memory-set', mem),
   openChatWindow: () => ipcRenderer.send('pet:open-chat-window'),
   openEventsWindow: () => ipcRenderer.send('pet:open-events-window'),
+  openFileWindow: () => ipcRenderer.send('pet:open-file-window'),
   getEvents: () => ipcRenderer.invoke('pet:events-get'),
   clearEvents: () => ipcRenderer.invoke('pet:events-clear'),
+  // 文件助手（只读部分）
+  searchFiles: (opts) => ipcRenderer.invoke('pet:fs-search', opts),
+  listDir: (dir, opts) => ipcRenderer.invoke('pet:fs-list-dir', dir, opts),
+  readFile: (opts) => ipcRenderer.invoke('pet:fs-read', opts),
+  openPath: (p) => ipcRenderer.invoke('pet:fs-open', p),
+  revealPath: (p) => ipcRenderer.invoke('pet:fs-reveal', p),
+  pickRoot: () => ipcRenderer.invoke('pet:fs-roots-pick'),
+  getIndexStatus: () => ipcRenderer.invoke('pet:index-status-get'),
   replay: (text) => ipcRenderer.send('pet:replay', text),
   onHistoryAppend: (cb) => ipcRenderer.on('pet:history-append', (_e, rec) => cb(rec)),
   onHistoryClear: (cb) => ipcRenderer.on('pet:history-clear', () => cb()),
@@ -27,5 +36,6 @@ contextBridge.exposeInMainWorld('petAPI', {
   onSetMuted: (cb) => ipcRenderer.on('pet:set-muted', (_e, m) => cb(m)),
   onVoiceChanged: (cb) => ipcRenderer.on('pet:voice-changed', () => cb()),
   onEventAppend: (cb) => ipcRenderer.on('pet:event-append', (_e, ev) => cb(ev)),
-  onEventClear: (cb) => ipcRenderer.on('pet:events-clear', () => cb())
+  onEventClear: (cb) => ipcRenderer.on('pet:events-clear', () => cb()),
+  onIndexProgress: (cb) => ipcRenderer.on('pet:index-progress', (_e, st) => cb(st))
 });
