@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('petAPI', {
   setConfig: (patch) => ipcRenderer.invoke('pet:config-set', patch),
   getHistory: () => ipcRenderer.invoke('pet:history-get'),
   clearHistory: () => ipcRenderer.invoke('pet:history-clear'),
+  getMemory: () => ipcRenderer.invoke('pet:memory-get'),
+  setMemory: (mem) => ipcRenderer.invoke('pet:memory-set', mem),
   openChatWindow: () => ipcRenderer.send('pet:open-chat-window'),
   replay: (text) => ipcRenderer.send('pet:replay', text),
   onHistoryAppend: (cb) => ipcRenderer.on('pet:history-append', (_e, rec) => cb(rec)),

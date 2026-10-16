@@ -259,6 +259,7 @@ async function sendChat() {
 
 function errorReply(err, status) {
   if (err === 'no_key') return '你还没告诉我 API Key 呢，右键「设置 API Key」吧～';
+  if (err === 'key_broken') return '我的 Key 好像失效了，右键重新设置一次吧～';
   if (err === 'api_status') {
     if (status === 401) return '这个 Key 好像不对哦，再检查一下？';
     if (status === 402) return '账户没钱啦，去 DeepSeek 平台充点值吧～';

@@ -8,7 +8,10 @@
   <body>
     <header>
       <span class="title">和小鲸聊天</span>
-      <button id="clear" title="清空全部聊天记录">清空记录</button>
+      <span class="actions">
+        <button id="memory-btn" title="设置她的规则和关于你的资料">记忆</button>
+        <button id="clear" title="清空全部聊天记录">清空记录</button>
+      </span>
     </header>
 
     <main id="list"></main>
@@ -17,6 +20,29 @@
       <input id="input" type="text" placeholder="跟小鲸说点什么…" maxlength="200" autocomplete="off" />
       <button id="send">发送</button>
     </footer>
+
+    <!-- 记忆面板 -->
+    <div id="memory-panel" class="hidden">
+      <div class="panel-card">
+        <h3>记忆</h3>
+
+        <label class="field-label">规则（她会一直遵守）</label>
+        <div id="rules-list"></div>
+        <div class="rule-add">
+          <input id="rule-input" placeholder="例如：回复要带颜文字" maxlength="80" />
+          <button id="rule-add-btn">添加</button>
+        </div>
+
+        <label class="field-label">关于我</label>
+        <textarea id="profile-input" rows="4" maxlength="500"
+          placeholder="例如：我叫小明，大一，学计算机，喜欢喝茶…"></textarea>
+
+        <div class="panel-actions">
+          <button id="memory-cancel">取消</button>
+          <button id="memory-save">保存</button>
+        </div>
+      </div>
+    </div>
 
     <script src="chat.js"></script>
   </body>

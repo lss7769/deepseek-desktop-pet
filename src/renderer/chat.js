@@ -67,6 +67,7 @@ function clearList() {
 
 function errorReply(err, status) {
   if (err === 'no_key') return '你还没告诉我 API Key 呢，在桌宠右键「设置 API Key」吧～';
+  if (err === 'key_broken') return '我的 Key 好像失效了，右键重新设置一次 API Key 吧～';
   if (err === 'api_status') {
     if (status === 401) return '这个 Key 好像不对哦，再检查一下？';
     if (status === 402) return '账户没钱啦，去 DeepSeek 平台充点值吧～';
@@ -107,6 +108,71 @@ clearBtn.addEventListener('click', async () => {
 
 window.petAPI.onHistoryAppend((rec) => addMsg(rec));
 window.petAPI.onHistoryClear(() => clearList());
+
+// ---------- 记忆面板 ----------
+const memoryBtn = document.getElementById('memory-btn');
+const memoryPanel = document.getElementById('memory-panel');
+const rulesList = document.getElementById('rules-list');
+const ruleInput = document.getElementById('rule-input');
+const ruleAddBtn = document.getElementById('rule-add-btn');
+const profileInput = document.getElementById('profile-input');
+const memorySave = document.getElementById('memory-save');
+const memoryCancel = document.getElementById('memory-cancel');
+
+let draftRules = [];
+
+function renderRules() {
+  rulesList.innerHTML = '';
+  if (!draftRules.length) {
+    const empty = document.createElement('div');
+    empty.className = 'rule-empty';
+    empty.textContent = '还没有规则';
+    rulesList.appendChild(empty);
+    return;
+  }
+  draftRules.forEach((r, i) => {
+    const row = document.createElement('div');
+    row.className = 'rule-row';
+    const span = document.createElement('span');
+    span.textContent = r;
+    const del = document.createElement('button');
+    del.textContent = '×';
+    del.title = '删除';
+    del.addEventListener('click', () => { draftRules.splice(i, 1); renderRules(); });
+    row.appendChild(span);
+    row.appendChild(del);
+    rulesList.appendChild(row);
+  });
+}
+
+function addRule() {
+  const v = ruleInput.value.trim();
+  if (!v) return;
+  draftRules.push(v);
+  ruleInput.value = '';
+  renderRules();
+}
+
+async function openMemoryPanel() {
+  const mem = await window.petAPI.getMemory();
+  draftRules = Array.isArray(mem.rules) ? mem.rules.slice() : [];
+  profileInput.value = mem.profile || '';
+  renderRules();
+  memoryPanel.classList.remove('hidden');
+  ruleInput.focus();
+}
+
+async function saveMemorySettings() {
+  const mem = await window.petAPI.setMemory({ rules: draftRules, profile: profileInput.value.trim() });
+  draftRules = Array.isArray(mem.rules) ? mem.rules : [];
+  memoryPanel.classList.add('hidden');
+}
+
+memoryBtn.addEventListener('click', openMemoryPanel);
+memoryCancel.addEventListener('click', () => memoryPanel.classList.add('hidden'));
+memorySave.addEventListener('click', saveMemorySettings);
+ruleAddBtn.addEventListener('click', addRule);
+ruleInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') addRule(); });
 
 async function load() {
   const h = await window.petAPI.getHistory();

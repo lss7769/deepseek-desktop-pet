@@ -3,8 +3,8 @@ const path = require('path');
 const fs = require('fs');
 const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
 
-// 运行时数据写回项目目录，避免写向 %APPDATA%（自用，便于清理与迁移）
-app.setPath('userData', path.join(__dirname, '..', '.electron-data'));
+// 运行时数据存放在独立目录，避免写向 %APPDATA%（自用，便于清理与迁移）
+app.setPath('userData', 'D:\\DeepSeekPet');
 
 const WIN_W = 300;
 const WIN_H = 260;
@@ -32,6 +32,35 @@ function loadConfig() {
 
 function saveConfig(cfg) {
   fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2));
+}
+
+// ---------- 记忆（主人定的规则 + 关于主人） ----------
+const memoryPath = path.join(app.getPath('userData'), 'memory.json');
+
+function loadMemory() {
+  try {
+    const m = JSON.parse(fs.readFileSync(memoryPath, 'utf8'));
+    return { rules: Array.isArray(m.rules) ? m.rules : [], profile: String(m.profile || '') };
+  } catch {
+    return { rules: [], profile: '' };
+  }
+}
+
+function saveMemory(mem) {
+  fs.writeFileSync(memoryPath, JSON.stringify(mem, null, 2));
+}
+
+// 把「人设 + 规则 + 关于主人」拼成 system prompt
+function buildSystemPrompt(cfg) {
+  const parts = [cfg.systemPrompt || DEFAULT_SYSTEM_PROMPT];
+  const mem = loadMemory();
+  if (mem.rules.length) {
+    parts.push('【主人定的规则，必须遵守】\n' + mem.rules.map(r => '- ' + r).join('\n'));
+  }
+  if (mem.profile.trim()) {
+    parts.push('【关于主人】\n' + mem.profile.trim());
+  }
+  return parts.join('\n\n');
 }
 
 // ---------- API Key 加密（Windows DPAPI，绑定当前用户账户） ----------
@@ -119,6 +148,9 @@ function broadcast(channel, ...args) {
     if (!w.isDestroyed()) w.webContents.send(channel, ...args);
   }
 }
+
+// ---------- 上下文记忆 ----------
+const CONTEXT_MESSAGES = 6; // 每次请求带上最近 6 条历史（约 3 轮对话）
 
 // ---------- v4-pro 智能路由 ----------
 const COMPLEX_KEYWORDS = [
@@ -227,6 +259,20 @@ ipcMain.handle('pet:history-clear', () => {
   return { ok: true };
 });
 
+// ---------- 记忆 IPC ----------
+ipcMain.handle('pet:memory-get', () => loadMemory());
+
+ipcMain.handle('pet:memory-set', (_e, mem) => {
+  const clean = {
+    rules: Array.isArray(mem?.rules)
+      ? mem.rules.map(String).map(s => s.trim()).filter(Boolean)
+      : [],
+    profile: String(mem?.profile || '')
+  };
+  saveMemory(clean);
+  return clean;
+});
+
 ipcMain.on('pet:open-chat-window', () => openChatWindow());
 
 // 聊天窗口点历史里的回复 → 让桌宠重念一遍
@@ -280,7 +326,10 @@ ipcMain.handle('pet:tts', async (_e, text) => {
 ipcMain.handle('pet:chat', async (_e, message, opts) => {
   const cfg = loadConfig();
   const key = getApiKey(cfg);
-  if (!key) return { ok: false, error: 'no_key' };
+  if (!key) {
+    // 有密文却解不开 = 加密密钥失效（例如换了数据目录），提示重设
+    return { ok: false, error: cfg.deepseekApiKey ? 'key_broken' : 'no_key' };
+  }
 
   const text = String(message).slice(0, 2000);
   const deepMode = !!cfg.deepMode;
@@ -291,6 +340,12 @@ ipcMain.handle('pet:chat', async (_e, message, opts) => {
   if (bs.level === 'exceeded' && model !== 'deepseek-v4-flash') {
     model = 'deepseek-v4-flash';
   }
+
+  // 上下文记忆：取最近几条历史（在写入当前消息之前读，避免重复）
+  const historyMessages = readHistory().slice(-CONTEXT_MESSAGES).map(r => ({
+    role: r.role === 'user' ? 'user' : 'assistant',
+    content: String(r.text || '')
+  }));
 
   // 记录并广播用户消息（聊天窗口实时显示）
   appendHistory({ role: 'user', text });
@@ -305,7 +360,8 @@ ipcMain.handle('pet:chat', async (_e, message, opts) => {
       body: JSON.stringify({
         model,
         messages: [
-          { role: 'system', content: cfg.systemPrompt || DEFAULT_SYSTEM_PROMPT },
+          { role: 'system', content: buildSystemPrompt(cfg) },
+          ...historyMessages,
           { role: 'user', content: text }
         ],
         temperature: 0.85,
