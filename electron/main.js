@@ -4,7 +4,6 @@ const fs = require('fs');
 const fsSafe = require('./fs-safe');
 const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
 
-// 运行时数据存放在独立目录，避免写向 %APPDATA%（自用，便于清理与迁移）
 app.setPath('userData', 'D:\\DeepSeekPet');
 
 const WIN_W = 300;
@@ -1027,10 +1026,57 @@ function createWindow() {
   win.setAlwaysOnTop(true, 'screen-saver');
   win.loadFile(path.join(__dirname, '..', 'src', 'renderer', 'index.html'));
 
-  // 默认整窗鼠标穿透；渲染层命中角色或气泡/输入框时再临时关闭穿透
   win.setIgnoreMouseEvents(true, { forward: true });
+  win.on('closed', () => { win = null; stopWalk(); });
+}
 
-  win.on('closed', () => { win = null; });
+// ---------- 走到鼠标位置 ----------
+let walkTarget = null;
+let walkInterval = null;
+
+function startWalkTo(targetX, targetY) {
+  if (walkInterval) clearInterval(walkInterval);
+  if (!win || win.isDestroyed()) return;
+
+  walkTarget = { x: targetX, y: targetY };
+  const speed = 200; // px/秒
+  const fps = 60;
+  const frameDist = speed / fps;
+
+  win.webContents.send('pet:walk-start');
+  logEvent('walk', { start: true });
+
+  walkInterval = setInterval(() => {
+    if (!win || win.isDestroyed()) { stopWalk(); return; }
+    const [wx, wy] = win.getPosition();
+    const dx = walkTarget.x - wx;
+    const dy = walkTarget.y - wy;
+    const dist = Math.hypot(dx, dy);
+
+    if (dist < frameDist * 2) {
+      win.setPosition(Math.round(walkTarget.x), Math.round(walkTarget.y));
+      stopWalk();
+      win.webContents.send('pet:walk-end');
+      logEvent('walk', { end: true });
+      return;
+    }
+
+    const ratio = frameDist / dist;
+    const nx = wx + dx * ratio;
+    const ny = wy + dy * ratio;
+    win.setPosition(Math.round(nx), Math.round(ny));
+  }, 1000 / fps);
+}
+
+function stopWalk() {
+  if (walkInterval) { clearInterval(walkInterval); walkInterval = null; }
+  walkTarget = null;
+}
+
+// 走到当前鼠标位置（右键直接触发，无需开模式）
+function walkToCursor() {
+  const cursor = screen.getCursorScreenPoint();
+  startWalkTo(cursor.x - WIN_W / 2, cursor.y - WIN_H + 60);
 }
 
 // ---------- 独立聊天窗口 ----------
@@ -1618,6 +1664,7 @@ function showContextMenu() {
       }))
     },
     { label: muted ? '取消静音' : '静音', click: () => { muted = !muted; win.webContents.send('pet:set-muted', muted); } },
+    { label: '走到鼠标位置', click: () => walkToCursor() },
     { type: 'separator' },
     {
       label: '深度模式（v4-pro）',
@@ -1650,6 +1697,7 @@ app.whenReady().then(() => {
   // 启动后台异步建一次文件名索引（不阻塞桌宠显示）
   loadIndexFromDisk();
   setTimeout(rebuildIndex, 1500);
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

@@ -38,17 +38,66 @@ const QUOTES = [
 const PET_H = 214;        // 角色显示高度
 const PET_BOTTOM = 8;     // 距窗口底部留白
 const BOUNCE_MS = 380;    // 点击蹦跳时长
+const BLINK_MS = 180;     // 眨眼时长
+const PARTICLE_LIFE = 900; // 粒子存活毫秒
 
 let petSprite = null;
 let floatOffset = 0;
 let startedAt = 0;
 
 // ---------- 动画状态 ----------
-let animState = 'idle';   // idle | talking
+let animState = 'idle';   // idle | talking | walking
 let bounceUntil = 0;      // 点击蹦跳结束时刻
+let blinkUntil = 0;       // 眨眼结束时刻
+let nextBlinkAt = 0;      // 下次眨眼时刻
+let walkPhase = 0;        // 行走相位（腿部摆动）
+let walkTilt = 0;         // 行走/拖拽倾斜度（-1 ~ 1）
 let muted = false;
 let chatOpen = false;
 let keyOpen = false;
+
+// ---------- 粒子系统（点击星星） ----------
+const particles = [];
+
+function spawnParticles(x, y, count = 6) {
+  for (let i = 0; i < count; i++) {
+    const angle = (Math.PI * 2 * i) / count + Math.random() * 0.5;
+    const speed = 1.5 + Math.random() * 2;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed - 2, // 向上飘
+      life: PARTICLE_LIFE,
+      maxLife: PARTICLE_LIFE,
+      size: 2 + Math.random() * 3,
+      color: ['#ffd700', '#ff6b9d', '#c44569', '#f8b500', '#ffffff'][Math.floor(Math.random() * 5)]
+    });
+  }
+}
+
+function updateParticles(dt) {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.08; // 重力
+    p.life -= dt;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    const alpha = p.life / p.maxLife;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
 
 // ---------- 加载角色 ----------
 function loadPet() {
@@ -75,28 +124,96 @@ function drawPet(t) {
   // 以脚底中心为支点：呼吸/摇摆更自然
   ctx.translate(cx, baseY + PET_H);
 
-  const sway = Math.sin(t / 1500) * 0.02;          // 左右轻摆
+  const sway = Math.sin(t / 1500) * 0.02;          // 待机左右轻摆
   const breathe = 1 + Math.sin(t / 1300) * 0.025;  // 呼吸缩放
-  ctx.rotate(sway);
-  ctx.scale(1, breathe);
 
-  // 说话时上下颠；点击时蹦一下
+  // 行走倾斜（拖拽/跟随）：向移动方向倾斜，最大 8 度
+  const tilt = walkTilt * 0.14;
+  ctx.rotate(sway + tilt);
+
+  // 眨眼：纵向压缩 + 亮度轻微降低
+  let blinkScale = 1;
+  let brightness = 1;
+  if (t < blinkUntil) {
+    const p = 1 - (blinkUntil - t) / BLINK_MS;
+    blinkScale = 1 - Math.sin(p * Math.PI) * 0.15;
+    brightness = 0.92 + Math.sin(p * Math.PI) * 0.08;
+  }
+
+  ctx.scale(1, breathe * blinkScale);
+  ctx.filter = `brightness(${brightness})`;
+
+  // 说话时上下颠 + 身体微微前倾；点击时蹦一下；行走时摇摆+颠簸
   let dy = 0;
-  if (animState === 'talking') dy -= Math.abs(Math.sin(t / 90)) * 5;
+  let lean = 0;
+  let walkSway = 0;
+  let walkBounce = 0;
+
+  if (animState === 'talking') {
+    dy -= Math.abs(Math.sin(t / 90)) * 5;
+    lean = -0.04;
+  } else if (animState === 'walking') {
+    // 行走动画：身体前后摇摆 + 上下颠簸（模拟走路）
+    walkSway = Math.sin(t / 180) * 0.06;  // 身体摇摆
+    walkBounce = -Math.abs(Math.sin(t / 120)) * 4; // 上下颠簸
+    walkPhase = Math.sin(t / 120); // 腿部摆动相位
+  }
+
   if (t < bounceUntil) {
     const p = (bounceUntil - t) / BOUNCE_MS;
     dy -= Math.sin(p * Math.PI) * 16;
   }
 
-  ctx.translate(0, dy - PET_H);
+  ctx.rotate(lean + walkSway);
+  ctx.translate(0, dy + walkBounce - PET_H);
   ctx.drawImage(petSprite, -w / 2, 0, w, PET_H);
+
+// 行走时画腿（Canvas 简单线条，左右交替）
+  if (animState === 'walking') {
+    ctx.strokeStyle = 'rgba(74, 144, 217, 0.8)';
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    const legSpread = 14;
+    const legLen = 14;
+    const swing = walkPhase * 8;
+
+    ctx.beginPath();
+    ctx.moveTo(-legSpread, 2);
+    ctx.quadraticCurveTo(-legSpread - swing * 0.5, legLen * 0.6, -legSpread - swing, legLen);
+    ctx.moveTo(legSpread, 2);
+    ctx.quadraticCurveTo(legSpread + swing * 0.5, legLen * 0.6, legSpread + swing, legLen);
+    ctx.stroke();
+  }
+
   ctx.restore();
+
+  // 绘制粒子（在角色上层）
+  drawParticles();
 }
 
+// 随机触发眨眼：每 2.5 ~ 6 秒眨一次
+function scheduleBlink(t) {
+  if (nextBlinkAt === 0) nextBlinkAt = t + 2500 + Math.random() * 3500;
+  if (t >= nextBlinkAt) {
+    blinkUntil = t + BLINK_MS;
+    nextBlinkAt = t + 2500 + Math.random() * 3500;
+  }
+}
+
+let lastFrameTs = 0;
 function tick(ts) {
   if (!startedAt) startedAt = ts;
   const t = ts - startedAt;
+  const dt = lastFrameTs ? ts - lastFrameTs : 16;
+  lastFrameTs = ts;
+
   floatOffset = Math.sin(t / 700) * 4;
+  scheduleBlink(t);
+  updateParticles(dt);
+
+// 行走倾斜衰减（拖拽/行走停止后回正）
+  if (animState !== 'walking') walkTilt *= 0.92;
+
   drawPet(t);
   requestAnimationFrame(tick);
 }
@@ -202,6 +319,8 @@ window.addEventListener('mousemove', (e) => {
     window.petAPI.moveWindow(dx, dy);
     lastX = e.screenX;
     lastY = e.screenY;
+    // 拖拽时根据移动方向倾斜身体
+    walkTilt = Math.max(-1, Math.min(1, dx * 0.15));
   }
   if (Math.hypot(e.screenX - downX, e.screenY - downY) > 4) moved = true;
 });
@@ -209,8 +328,14 @@ window.addEventListener('mousemove', (e) => {
 window.addEventListener('mouseup', () => {
   if (!dragging) return;
   dragging = false;
+  walkTilt = 0; // 拖拽结束回正
   if (!moved) {
     bounceUntil = performance.now() + BOUNCE_MS; // 点击蹦跳
+    // 点击位置发射粒子
+    const rect = canvas.getBoundingClientRect();
+    const clickX = lastX - rect.left;
+    const clickY = lastY - rect.top;
+    spawnParticles(clickX, clickY, 8);
     say(randomQuote());
   }
 });
@@ -316,6 +441,16 @@ window.petAPI.onSetMuted((m) => {
   animState = 'idle';
 });
 window.petAPI.onVoiceChanged(() => {
-  // 换声音后立刻试一句，让用户听到效果
   say('换好啦，听听我的新声音～');
+});
+
+// 开始行走
+window.petAPI.onWalkStart(() => {
+  animState = 'walking';
+});
+
+// 行走结束
+window.petAPI.onWalkEnd(() => {
+  animState = 'idle';
+  say('到啦～');
 });

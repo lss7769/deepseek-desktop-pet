@@ -42,5 +42,7 @@ contextBridge.exposeInMainWorld('petAPI', {
   onVoiceChanged: (cb) => ipcRenderer.on('pet:voice-changed', () => cb()),
   onEventAppend: (cb) => ipcRenderer.on('pet:event-append', (_e, ev) => cb(ev)),
   onEventClear: (cb) => ipcRenderer.on('pet:events-clear', () => cb()),
-  onIndexProgress: (cb) => ipcRenderer.on('pet:index-progress', (_e, st) => cb(st))
+  onIndexProgress: (cb) => ipcRenderer.on('pet:index-progress', (_e, st) => cb(st)),
+  onWalkStart: (cb) => ipcRenderer.on('pet:walk-start', () => cb()),
+  onWalkEnd: (cb) => ipcRenderer.on('pet:walk-end', () => cb())
 });
