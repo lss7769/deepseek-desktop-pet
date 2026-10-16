@@ -1,0 +1,100 @@
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 300px;
+  height: 260px;
+  overflow: hidden;
+  background: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+  font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+}
+
+#pet {
+  display: block;
+}
+
+/* ---------- 气泡 ---------- */
+#bubble {
+  position: absolute;
+  top: 6px;
+  left: 12px;
+  right: 12px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.96);
+  border: 2px solid #4b8bf5;
+  border-radius: 14px;
+  color: #12304f;
+  font-size: 14px;
+  line-height: 1.4;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+  word-break: break-word;
+}
+
+#bubble.hidden {
+  opacity: 0;
+}
+
+#bubble::after {
+  content: "";
+  position: absolute;
+  bottom: -9px;
+  left: 30px;
+  width: 0;
+  height: 0;
+  border-left: 9px solid transparent;
+  border-right: 9px solid transparent;
+  border-top: 9px solid #4b8bf5;
+}
+
+/* ---------- 输入条（聊天 / Key） ---------- */
+#chat-bar,
+#key-bar {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 6px;
+  display: flex;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.95);
+  border: 2px solid #4b8bf5;
+  border-radius: 12px;
+  padding: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+#chat-bar.hidden,
+#key-bar.hidden {
+  display: none;
+}
+
+#chat-input,
+#key-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 13px;
+  padding: 4px 6px;
+  color: #12304f;
+}
+
+#chat-send,
+#key-save {
+  border: none;
+  background: #4b8bf5;
+  color: #fff;
+  border-radius: 8px;
+  padding: 4px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+#chat-send:hover,
+#key-save:hover {
+  background: #3a78e0;
+}

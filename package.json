@@ -1,0 +1,16 @@
+{
+  "name": "deepseek-desktop-pet",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DeepSeek 可爱桌宠（Windows 自用）",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^44.7.2"
+  },
+  "dependencies": {
+    "msedge-tts": "^2.1.0"
+  }
+}

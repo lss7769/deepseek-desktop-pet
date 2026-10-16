@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>DeepSeek 桌宠</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div id="bubble" class="hidden"></div>
+
+    <!-- 聊天输入框 -->
+    <div id="chat-bar" class="hidden">
+      <input id="chat-input" type="text" placeholder="跟小鲸说点什么…" maxlength="200" />
+      <button id="chat-send">发送</button>
+    </div>
+
+    <!-- API Key 输入框 -->
+    <div id="key-bar" class="hidden">
+      <input id="key-input" type="password" placeholder="粘贴 DeepSeek API Key" />
+      <button id="key-save">保存</button>
+    </div>
+
+    <canvas id="pet" width="300" height="260"></canvas>
+    <script src="../assets/pet/whale-girl.js"></script>
+    <script src="pet.js"></script>
+  </body>
+</html>
