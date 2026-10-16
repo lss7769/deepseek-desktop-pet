@@ -49,7 +49,25 @@
       <button id="copy-path-btn" disabled>复制路径</button>
       <button id="copy-to-btn" disabled>复制到…</button>
       <button id="move-to-btn" disabled>移动至…</button>
+      <button id="trash-btn" class="danger" disabled>移到回收站</button>
     </footer>
+
+    <!-- 删除目录：必须输入目录名确认 -->
+    <div id="trash-panel" class="hidden">
+      <div class="panel-card">
+        <h3>删除目录确认</h3>
+        <p class="tip break-all" id="trash-src"></p>
+        <p class="tip">删除目录风险大，请输入它的名字「<b id="trash-name"></b>」确认：</p>
+        <div class="dest-row">
+          <input id="trash-input" type="text" placeholder="输入目录名" autocomplete="off" />
+        </div>
+        <p class="tip">确认后还会弹一次原生确认框；删除走系统回收站，可以还原。</p>
+        <div class="panel-actions">
+          <button id="trash-cancel">取消</button>
+          <button id="trash-ok" class="danger-ok">确认删除</button>
+        </div>
+      </div>
+    </div>
 
     <!-- 复制 / 移动：填目标路径（会走原生确认框） -->
     <div id="dest-panel" class="hidden">

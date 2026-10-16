@@ -11,6 +11,7 @@ const openBtn = document.getElementById('open-btn');
 const copyBtn = document.getElementById('copy-path-btn');
 const copyToBtn = document.getElementById('copy-to-btn');
 const moveToBtn = document.getElementById('move-to-btn');
+const trashBtn = document.getElementById('trash-btn');
 const rootsBtn = document.getElementById('roots-btn');
 const rootsPanel = document.getElementById('roots-panel');
 const rootsList = document.getElementById('roots-list');
@@ -24,6 +25,13 @@ const destInput = document.getElementById('dest-input');
 const destPick = document.getElementById('dest-pick');
 const destCancel = document.getElementById('dest-cancel');
 const destOk = document.getElementById('dest-ok');
+
+const trashPanel = document.getElementById('trash-panel');
+const trashSrc = document.getElementById('trash-src');
+const trashName = document.getElementById('trash-name');
+const trashInput = document.getElementById('trash-input');
+const trashCancel = document.getElementById('trash-cancel');
+const trashOk = document.getElementById('trash-ok');
 
 const PREVIEW_LINES = 400;
 let roots = [];
@@ -178,6 +186,7 @@ async function selectHit(h) {
   copyBtn.disabled = false;
   copyToBtn.disabled = false;
   moveToBtn.disabled = false;
+  trashBtn.disabled = false;
   pvName.textContent = h.p.split('\\').pop();
   pvName.title = h.p;
   pvSize.textContent = fmtSize(h.s) + ' · ' + fmtTime(h.m);
@@ -332,6 +341,55 @@ destOk.addEventListener('click', async () => {
 
 copyToBtn.addEventListener('click', () => openDestPanel('copy'));
 moveToBtn.addEventListener('click', () => openDestPanel('move'));
+
+// ---------- 移到回收站（文件直接走；目录会先要求输入目录名） ----------
+function clearSelection() {
+  selected = null;
+  openBtn.disabled = copyBtn.disabled = copyToBtn.disabled = moveToBtn.disabled = trashBtn.disabled = true;
+  pvName.textContent = '选中文件后可预览';
+  pvName.title = '';
+  pvSize.textContent = '';
+  pvBody.textContent = '';
+}
+
+function handleTrashResult(res) {
+  if (!res || !res.ok) {
+    setStatus((res && res.error) || '删除失败');
+    return;
+  }
+  setStatus('已丢进回收站，随时能还原');
+  hits = hits.filter(h => h.p !== res.path);
+  clearSelection();
+  renderHits();
+}
+
+trashBtn.addEventListener('click', async () => {
+  if (!selected) return;
+  setStatus('等你确认…');
+  const res = await window.petAPI.trashPath(selected.p);
+  if (res && res.needName) {
+    // 目录：要求输入目录名再确认
+    trashSrc.textContent = '目标：' + selected.p;
+    trashName.textContent = res.name || '';
+    trashInput.value = '';
+    trashPanel.classList.remove('hidden');
+    trashInput.focus();
+    return;
+  }
+  handleTrashResult(res);
+});
+
+trashPanel.addEventListener('click', (e) => { if (e.target === trashPanel) trashPanel.classList.add('hidden'); });
+trashCancel.addEventListener('click', () => trashPanel.classList.add('hidden'));
+trashOk.addEventListener('click', async () => {
+  const name = trashInput.value.trim();
+  if (!selected) { trashPanel.classList.add('hidden'); return; }
+  if (!name) { setStatus('先输入目录名'); return; }
+  trashPanel.classList.add('hidden');
+  setStatus('等你确认…');
+  const res = await window.petAPI.trashPath(selected.p, name);
+  handleTrashResult(res);
+});
 
 qInput.addEventListener('input', scheduleSearch);
 extSel.addEventListener('change', doSearch);

@@ -357,6 +357,31 @@ async function movePath(src, dst, roots) {
   return { ok: true, op: 'move', src: c.src, dst: c.dst, isDir: c.isDir };
 }
 
+// ---------- 删除前的校验（真正的删除由 electron 的 shell.trashItem 执行，这里只查拦不拦） ----------
+async function checkTrash(target, roots) {
+  const r = resolveInRoots(target, roots);
+  if (!r.ok) return { ok: false, error: r.error };
+  if (r.root.mode !== 'rw') return { ok: false, error: `它在只读目录 ${r.root.path} 里，我不能删` };
+
+  let st;
+  try { st = await fs.promises.lstat(r.path); } catch { return { ok: false, error: '路径不存在：' + r.path }; }
+
+  // 授权根目录本身永远不许删
+  if (lowerOnWin(r.path) === lowerOnWin(r.root.real) || lowerOnWin(r.path) === lowerOnWin(r.root.path)) {
+    return { ok: false, error: '这是授权目录的根目录本身，我绝不会删它' };
+  }
+  // 含 .git 的目录是代码仓库，不许删
+  if (st.isDirectory()) {
+    try {
+      const names = await fs.promises.readdir(r.path);
+      if (names.some(n => n.toLowerCase() === '.git')) {
+        return { ok: false, error: '这个目录里有 .git，是个代码仓库，我不能删' };
+      }
+    } catch { /* 读不了就按不能删处理 */ return { ok: false, error: '读不了这个目录，我不敢删' }; }
+  }
+  return { ok: true, path: r.path, isDir: st.isDirectory() };
+}
+
 module.exports = {
   IGNORE_DIRS,
   TEXT_EXTS,
@@ -372,5 +397,6 @@ module.exports = {
   countEntries,
   checkWrite,
   copyPath,
-  movePath
+  movePath,
+  checkTrash
 };

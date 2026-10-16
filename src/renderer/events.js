@@ -46,7 +46,10 @@ const TOOL_NAMES = {
   search_in_files: '搜内容',
   list_dir: '列目录',
   read_file: '读文件',
-  open_path: '打开文件'
+  open_path: '打开文件',
+  copy_path: '复制文件',
+  move_path: '移动文件',
+  delete_path: '丢进回收站'
 };
 
 // 每类事件的圆点颜色与文案

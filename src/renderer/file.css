@@ -175,8 +175,8 @@ header .actions button:hover { color: var(--text); border-color: var(--accent); 
 .ops button:disabled { opacity: 0.4; cursor: default; }
 .ops button.danger:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); }
 
-/* ---------- 授权目录 / 目标路径面板 ---------- */
-#roots-panel, #dest-panel {
+/* ---------- 授权目录 / 目标路径 / 删除确认面板 ---------- */
+#roots-panel, #dest-panel, #trash-panel {
   position: fixed;
   inset: 0;
   z-index: 20;
@@ -185,10 +185,10 @@ header .actions button:hover { color: var(--text); border-color: var(--accent); 
   justify-content: center;
   background: rgba(4, 12, 22, 0.72);
 }
-#roots-panel.hidden, #dest-panel.hidden { display: none; }
+#roots-panel.hidden, #dest-panel.hidden, #trash-panel.hidden { display: none; }
 
 .dest-row { display: flex; gap: 8px; margin: 10px 0 0; }
-#dest-input {
+#dest-input, #trash-input {
   flex: 1;
   min-width: 0;
   padding: 8px 10px;
@@ -199,7 +199,7 @@ header .actions button:hover { color: var(--text); border-color: var(--accent); 
   outline: none;
   font-size: 12px;
 }
-#dest-input:focus { border-color: var(--accent); }
+#dest-input:focus, #trash-input:focus { border-color: var(--accent); }
 #dest-pick {
   flex: 0 0 auto;
   padding: 8px 12px;
@@ -211,10 +211,11 @@ header .actions button:hover { color: var(--text); border-color: var(--accent); 
   font-size: 12px;
 }
 #dest-pick:hover { color: var(--text); border-color: var(--accent); }
-#dest-src {
+#dest-src, .break-all {
   word-break: break-all;
   color: var(--text);
 }
+.danger-ok { background: var(--danger) !important; color: #2a0808 !important; }
 .panel-card {
   width: min(92%, 400px);
   max-height: 84%;

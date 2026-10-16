@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('petAPI', {
   openPath: (p) => ipcRenderer.invoke('pet:fs-open', p),
   copyPath: (src, dst) => ipcRenderer.invoke('pet:fs-copy', src, dst),
   movePath: (src, dst) => ipcRenderer.invoke('pet:fs-move', src, dst),
+  trashPath: (p, confirmName) => ipcRenderer.invoke('pet:fs-trash', p, confirmName),
   revealPath: (p) => ipcRenderer.invoke('pet:fs-reveal', p),
   pickRoot: () => ipcRenderer.invoke('pet:fs-roots-pick'),
   getIndexStatus: () => ipcRenderer.invoke('pet:index-status-get'),

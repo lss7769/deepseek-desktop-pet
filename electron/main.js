@@ -499,6 +499,18 @@ const TOOL_DEFS = [
         required: ['src', 'dst']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'delete_path',
+      description: '把一个文件移到系统回收站（破坏性操作，会弹确认框让主人确认；可以从回收站恢复）。path 必须是授权目录内、可写（rw）目录下的绝对路径；只能删文件，目录请让主人在文件助手窗口里操作。',
+      parameters: {
+        type: 'object',
+        properties: { path: { type: 'string', description: '要删除的文件的绝对路径，必须来自 search_files / list_dir 的结果' } },
+        required: ['path']
+      }
+    }
   }
 ];
 
@@ -668,6 +680,104 @@ async function toolWritePath(op, args) {
   return `${op === 'move' ? '移动' : '复制'}好了：${r.src} → ${r.dst}`;
 }
 
+// ---------- 删除（移到回收站） ----------
+const recentTrash = new Map(); // realpath -> ts：5 秒内重复删同一个直接拒
+const TRASH_REPEAT_MS = 5000;
+const TRASH_HOURLY_LIMIT = 20; // 单小时删除上限，超出要二次确认
+
+function trashCountLastHour() {
+  const since = Date.now() - 3600 * 1000;
+  return readEvents(100000).filter(ev => ev.type === 'fs_trash' && ev.ts >= since).length;
+}
+
+// 删除的强确认框：文案含路径 / 影响项数 / 可恢复说明；超频再追加一次确认
+async function confirmTrash(p, isDir, hourly) {
+  const name = path.basename(p);
+  let detail;
+  try {
+    const c = await fsSafe.countEntries(p);
+    const total = c.files + c.dirs;
+    const what = isDir ? `${total} 项（其中 ${c.files} 个文件、${c.dirs} 个子目录）` : '1 个文件';
+    detail =
+      `路径：${p}\n\n` +
+      `影响范围：${what}\n` +
+      '是否可恢复：可以，它会进系统回收站，随时能还原\n' +
+      '注意：这是删除操作，确认后立刻执行。';
+  } catch {
+    detail = `路径：${p}`;
+  }
+  const parent = (fileWin && !fileWin.isDestroyed()) ? fileWin
+    : (win && !win.isDestroyed() ? win : null);
+  const box = (opts) => parent ? dialog.showMessageBox(parent, opts) : dialog.showMessageBox(opts);
+  const res = await box({
+    type: 'warning',
+    title: '小鲸文件助手',
+    message: `要把「${name}」丢进回收站吗？`,
+    detail,
+    buttons: ['移到回收站', '取消'],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true
+  });
+  if (res.response !== 0) return false;
+  if (hourly >= TRASH_HOURLY_LIMIT) {
+    const res2 = await box({
+      type: 'warning',
+      title: '小鲸文件助手',
+      message: `这个小时已经删除过 ${hourly} 次了`,
+      detail: '删得太频繁了，我怕出意外。确定还要继续吗？',
+      buttons: ['确定继续', '算了'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true
+    });
+    return res2.response === 0;
+  }
+  return true;
+}
+
+// 删除统一入口：校验 → 目录输名字 → 防重复 → 确认框 → trashItem → 永久留痕
+async function performTrash(target, confirmName) {
+  const chk = await fsSafe.checkTrash(target, currentRoots());
+  if (!chk.ok) return { ok: false, error: chk.error };
+
+  // 目录必须输入它自己的名字确认（防误删）
+  if (chk.isDir) {
+    const want = path.basename(chk.path);
+    if (String(confirmName || '').trim() !== want) {
+      return { ok: false, needName: true, name: want, error: `删除目录需要输入它的名字「${want}」确认` };
+    }
+  }
+
+  const last = recentTrash.get(chk.path);
+  if (last && Date.now() - last < TRASH_REPEAT_MS) {
+    return { ok: false, error: '刚对它操作过，等几秒再来' };
+  }
+
+  const yes = await confirmTrash(chk.path, chk.isDir, trashCountLastHour());
+  if (!yes) return { ok: false, canceled: true, error: '已取消' };
+
+  try {
+    await shell.trashItem(chk.path);
+  } catch (e) {
+    return { ok: false, error: '回收站失败，没有删除：' + String(e && e.message || e) };
+  }
+  recentTrash.set(chk.path, Date.now());
+  logEvent('fs_trash', { name: path.basename(chk.path), path: chk.path });
+  return { ok: true, path: chk.path };
+}
+
+async function toolDeletePath(args) {
+  const p = String(args.path || '').trim();
+  if (!p) return '请给我一个要删除的文件路径。';
+  const chk = await fsSafe.checkTrash(p, currentRoots());
+  if (!chk.ok) return chk.error;
+  if (chk.isDir) return '这是目录。删除目录要主人在文件助手窗口里输入目录名确认，我先用不了。';
+  const r = await performTrash(p);
+  if (!r.ok) return r.canceled ? '主人取消了，我什么都没删。' : r.error;
+  return `已经把 ${r.path} 丢进回收站啦，随时能捞回来。`;
+}
+
 // 执行模型请求的工具，返回给模型看的文本结果
 async function executeTool(name, rawArgs) {
   let args = {};
@@ -685,6 +795,7 @@ async function executeTool(name, rawArgs) {
     if (name === 'open_path') return await toolOpenPath(args);
     if (name === 'copy_path') return await toolWritePath('copy', args);
     if (name === 'move_path') return await toolWritePath('move', args);
+    if (name === 'delete_path') return await toolDeletePath(args);
     return `未知工具：${name}`;
   } catch (e) {
     return `工具执行失败：${String(e && e.message || e)}`;
@@ -904,6 +1015,9 @@ ipcMain.handle('pet:fs-reveal', (_e, p) => {
 // 写入：复制 / 移动（UI 触发同样走确认框，与模型工具共用同一套风控）
 ipcMain.handle('pet:fs-copy', (_e, src, dst) => performWrite('copy', src, dst));
 ipcMain.handle('pet:fs-move', (_e, src, dst) => performWrite('move', src, dst));
+
+// 删除：移到回收站（confirmName 用于目录删前输名字确认）
+ipcMain.handle('pet:fs-trash', (_e, target, confirmName) => performTrash(target, confirmName));
 
 // 选择要授权的目录（原生选择框，多选）
 ipcMain.handle('pet:fs-roots-pick', async () => {
