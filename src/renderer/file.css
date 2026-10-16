@@ -185,7 +185,54 @@ header .actions button:hover { color: var(--text); border-color: var(--accent); 
   justify-content: center;
   background: rgba(4, 12, 22, 0.72);
 }
-#roots-panel.hidden, #dest-panel.hidden, #trash-panel.hidden { display: none; }
+#roots-panel.hidden, #dest-panel.hidden, #trash-panel.hidden, #recycle-panel.hidden { display: none; }
+
+/* 回收站列表 */
+.recycle-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.recycle-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #0b1726;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.recycle-item .name {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text);
+  word-break: break-all;
+}
+.recycle-item .time {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.recycle-item button {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+}
+.recycle-item button:hover { color: var(--text); border-color: var(--accent); }
+.recycle-empty {
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+  padding: 20px;
+}
 
 .dest-row { display: flex; gap: 8px; margin: 10px 0 0; }
 #dest-input, #trash-input {

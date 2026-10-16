@@ -82,6 +82,8 @@ function describe(ev) {
       return { dot: 'teal', text: `${ev.op === 'move' ? '移动' : '复制'}了文件（${ev.dest || ''}）` };
     case 'fs_trash':
       return { dot: 'orange', text: `把「${ev.name || ev.path || '一个文件'}」丢进了回收站` };
+    case 'fs_restore':
+      return { dot: 'green', text: `恢复了「${ev.name || ev.path || '一个文件'}」` };
     case 'error':
       return { dot: 'red', text: describeError(ev) };
     default:

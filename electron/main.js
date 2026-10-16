@@ -778,6 +778,38 @@ async function confirmTrash(p, isDir, hourly) {
 }
 
 // 删除统一入口：校验 → 目录输名字 → 防重复 → 确认框 → trashItem → 永久留痕
+// ---------- P4 最近删除记录：删除前自动备份，恢复时从备份移回 ----------
+const recycleLogPath = path.join(app.getPath('userData'), 'recycle-log.json');
+const recycleBackupDir = path.join(app.getPath('userData'), 'recycle-bin');
+
+function loadRecycleLog() {
+  try {
+    return JSON.parse(fs.readFileSync(recycleLogPath, 'utf8'));
+  } catch {
+    return [];
+  }
+}
+
+function saveRecycleLog(log) {
+  fs.writeFileSync(recycleLogPath, JSON.stringify(log, null, 2));
+}
+
+// 删除前备份到本地目录，返回备份路径
+async function backupBeforeTrash(srcPath) {
+  const st = await fs.promises.stat(srcPath);
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const name = path.basename(srcPath);
+  const backupDir = path.join(recycleBackupDir, ts);
+  await fs.promises.mkdir(backupDir, { recursive: true });
+  const backupPath = path.join(backupDir, name);
+  if (st.isDirectory()) {
+    await fs.promises.cp(srcPath, backupPath, { recursive: true });
+  } else {
+    await fs.promises.copyFile(srcPath, backupPath);
+  }
+  return backupPath;
+}
+
 async function performTrash(target, confirmName) {
   const chk = await fsSafe.checkTrash(target, currentRoots());
   if (!chk.ok) return { ok: false, error: chk.error };
@@ -798,14 +830,37 @@ async function performTrash(target, confirmName) {
   const yes = await confirmTrash(chk.path, chk.isDir, trashCountLastHour());
   if (!yes) return { ok: false, canceled: true, error: '已取消' };
 
+  // 删除前自动备份到本地目录（恢复用）
+  let backupPath = null;
+  try {
+    backupPath = await backupBeforeTrash(chk.path);
+  } catch (e) {
+    return { ok: false, error: '备份失败，没有删除：' + String(e && e.message || e) };
+  }
+
   try {
     await shell.trashItem(chk.path);
   } catch (e) {
+    // 回收站失败，清理备份
+    try { await fs.promises.rm(backupPath, { recursive: true, force: true }); } catch { /* ignore */ }
     return { ok: false, error: '回收站失败，没有删除：' + String(e && e.message || e) };
   }
   recentTrash.set(chk.path, Date.now());
   logEvent('fs_trash', { name: path.basename(chk.path), path: chk.path });
-  return { ok: true, path: chk.path };
+
+  // 记录到删除日志（恢复用）
+  const log = loadRecycleLog();
+  log.unshift({
+    src: chk.path,
+    backup: backupPath,
+    ts: Date.now(),
+    isDir: chk.isDir,
+    size: 0, // 目录大小暂时不计算
+    restored: false
+  });
+  saveRecycleLog(log);
+
+  return { ok: true, path: chk.path, backup: backupPath };
 }
 
 async function toolDeletePath(args) {
@@ -1111,6 +1166,54 @@ ipcMain.handle('pet:fs-move', (_e, src, dst) => performWrite('move', src, dst));
 
 // 删除：移到回收站（confirmName 用于目录删前输名字确认）
 ipcMain.handle('pet:fs-trash', (_e, target, confirmName) => performTrash(target, confirmName));
+
+// ---------- P4 最近删除记录：读取 + 恢复 ----------
+ipcMain.handle('pet:fs-recycle-list', () => {
+  const log = loadRecycleLog();
+  // 只返回未恢复的，按时间倒序
+  return log.filter(it => !it.restored).slice(0, 50);
+});
+
+ipcMain.handle('pet:fs-restore', async (_e, srcPath) => {
+  const log = loadRecycleLog();
+  const item = log.find(it => it.src === srcPath && !it.restored);
+  if (!item) return { ok: false, error: '没有找到这条删除记录' };
+
+  // 检查原路径是否被占用
+  if (fs.existsSync(item.src)) {
+    return { ok: false, error: '原路径已被占用，请先移开或重命名' };
+  }
+
+  try {
+    // 从备份目录移回原路径
+    await fs.promises.mkdir(path.dirname(item.src), { recursive: true });
+    if (item.isDir) {
+      await fs.promises.cp(item.backup, item.src, { recursive: true });
+      await fs.promises.rm(item.backup, { recursive: true, force: true });
+    } else {
+      await fs.promises.copyFile(item.backup, item.src);
+      await fs.promises.unlink(item.backup);
+    }
+    item.restored = true;
+    saveRecycleLog(log);
+    logEvent('fs_restore', { name: path.basename(item.src), path: item.src });
+    return { ok: true, path: item.src };
+  } catch (e) {
+    return { ok: false, error: '恢复失败：' + String(e && e.message || e) };
+  }
+});
+
+// 清理空备份目录（恢复后）
+async function cleanupEmptyBackupDirs() {
+  try {
+    const dirs = await fs.promises.readdir(recycleBackupDir);
+    for (const d of dirs) {
+      const full = path.join(recycleBackupDir, d);
+      const items = await fs.promises.readdir(full);
+      if (!items.length) await fs.promises.rmdir(full);
+    }
+  } catch { /* ignore */ }
+}
 
 // 选择要授权的目录（原生选择框，多选）
 ipcMain.handle('pet:fs-roots-pick', async () => {

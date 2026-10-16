@@ -33,6 +33,12 @@ const trashInput = document.getElementById('trash-input');
 const trashCancel = document.getElementById('trash-cancel');
 const trashOk = document.getElementById('trash-ok');
 
+// 回收站面板
+const recycleBtn = document.getElementById('recycle-btn');
+const recyclePanel = document.getElementById('recycle-panel');
+const recycleList = document.getElementById('recycle-list');
+const recycleClose = document.getElementById('recycle-close');
+
 const PREVIEW_LINES = 400;
 let roots = [];
 let selected = null;
@@ -390,6 +396,67 @@ trashOk.addEventListener('click', async () => {
   const res = await window.petAPI.trashPath(selected.p, name);
   handleTrashResult(res);
 });
+
+// ---------- 回收站：查看最近删除 + 恢复 ----------
+function fmtRecycleTime(ts) {
+  const d = new Date(ts || Date.now());
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+async function renderRecycleList() {
+  const items = await window.petAPI.recycleList();
+  recycleList.innerHTML = '';
+  if (!items.length) {
+    const empty = document.createElement('div');
+    empty.className = 'recycle-empty';
+    empty.textContent = '最近没有删除文件';
+    recycleList.appendChild(empty);
+    return;
+  }
+  for (const it of items) {
+    const row = document.createElement('div');
+    row.className = 'recycle-item';
+
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = it.src;
+    name.title = it.src;
+
+    const time = document.createElement('span');
+    time.className = 'time';
+    time.textContent = fmtRecycleTime(it.ts);
+
+    const btn = document.createElement('button');
+    btn.textContent = '恢复';
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      btn.textContent = '恢复中…';
+      const res = await window.petAPI.restorePath(it.src);
+      if (res && res.ok) {
+        setStatus('已恢复到：' + res.path);
+        await renderRecycleList();
+      } else {
+        setStatus((res && res.error) || '恢复失败');
+        btn.disabled = false;
+        btn.textContent = '恢复';
+      }
+    });
+
+    row.appendChild(name);
+    row.appendChild(time);
+    row.appendChild(btn);
+    recycleList.appendChild(row);
+  }
+}
+
+recycleBtn.addEventListener('click', async () => {
+  recyclePanel.classList.remove('hidden');
+  await renderRecycleList();
+});
+
+recycleClose.addEventListener('click', () => recyclePanel.classList.add('hidden'));
+recyclePanel.addEventListener('click', (e) => { if (e.target === recyclePanel) recyclePanel.classList.add('hidden'); });
 
 qInput.addEventListener('input', scheduleSearch);
 extSel.addEventListener('change', doSearch);
