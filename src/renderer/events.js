@@ -5,8 +5,13 @@ const usageBar = document.getElementById('usage-bar');
 const budgetHint = document.getElementById('budget-hint');
 const modeHint = document.getElementById('mode-hint');
 const clearBtn = document.getElementById('clear');
+const exportBtn = document.getElementById('export');
+const filterType = document.getElementById('filter-type');
+const filterQ = document.getElementById('filter-q');
+const filterCount = document.getElementById('filter-count');
 
 const MAX_ROWS = 200; // 界面最多保留这么多条
+let allEvents = []; // 全部事件（用于筛选/搜索）
 
 function fmtTime(ts) {
   const d = new Date(ts || Date.now());
@@ -107,6 +112,16 @@ function makeRow(ev) {
   return row;
 }
 
+// 事件类型分组（用于筛选）
+function eventGroup(ev) {
+  const t = ev.type;
+  if (t === 'chat') return 'chat';
+  if (t === 'tool') return 'tool';
+  if (t === 'fs_search' || t === 'fs_op' || t === 'fs_trash') return 'fs';
+  if (t === 'error') return 'error';
+  return 'system'; // start, voice, deepMode, distill, clear
+}
+
 function removeEmptyHint() {
   const hint = list.querySelector('.empty');
   if (hint) hint.remove();
@@ -122,6 +137,7 @@ function showEmptyHint() {
 
 // prepend=true 时插到最前面（新事件实时到来）
 function addEvent(ev, prepend) {
+  allEvents.unshift(ev); // 最新的在最前
   removeEmptyHint();
   if (prepend && list.firstChild) list.insertBefore(makeRow(ev), list.firstChild);
   else list.appendChild(makeRow(ev));
@@ -129,6 +145,59 @@ function addEvent(ev, prepend) {
   const rows = list.querySelectorAll('.ev');
   for (let i = MAX_ROWS; i < rows.length; i++) rows[i].remove();
 }
+
+// 重新渲染（筛选/搜索时）
+function renderList() {
+  const typeVal = filterType.value;
+  const q = filterQ.value.trim().toLowerCase();
+
+  const filtered = allEvents.filter(ev => {
+    if (typeVal && eventGroup(ev) !== typeVal) return false;
+    if (q) {
+      const { text } = describe(ev);
+      if (!text.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  list.innerHTML = '';
+  const toShow = filtered.slice(0, MAX_ROWS);
+  for (const ev of toShow) list.appendChild(makeRow(ev));
+  showEmptyHint();
+  filterCount.textContent = q || typeVal ? `${filtered.length} 条` : '';
+}
+
+// 导出当前筛选结果为 JSON
+exportBtn.addEventListener('click', () => {
+  const typeVal = filterType.value;
+  const q = filterQ.value.trim().toLowerCase();
+  const filtered = allEvents.filter(ev => {
+    if (typeVal && eventGroup(ev) !== typeVal) return false;
+    if (q) {
+      const { text } = describe(ev);
+      if (!text.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const data = filtered.map(ev => ({
+    time: fmtTime(ev.ts),
+    type: ev.type,
+    text: describe(ev).text,
+    raw: ev
+  }));
+
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `小鲸日记_${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+filterType.addEventListener('change', renderList);
+filterQ.addEventListener('input', renderList);
 
 // ---------- 用量卡片 ----------
 async function renderUsage() {
@@ -151,18 +220,18 @@ async function renderUsage() {
 
 clearBtn.addEventListener('click', async () => {
   await window.petAPI.clearEvents();
+  allEvents = [];
   list.innerHTML = '';
   showEmptyHint();
 });
 
 window.petAPI.onEventAppend((ev) => { addEvent(ev, true); renderUsage(); });
-window.petAPI.onEventClear(() => { list.innerHTML = ''; showEmptyHint(); });
+window.petAPI.onEventClear(() => { allEvents = []; list.innerHTML = ''; showEmptyHint(); });
 
 async function load() {
   const events = await window.petAPI.getEvents();
-  // 文件里旧的在前，倒着渲染让最新的排在最上面
-  for (let i = events.length - 1; i >= 0; i--) addEvent(events[i], false);
-  showEmptyHint();
+  allEvents = events.slice().reverse(); // 文件里旧的在前，倒过来让新的在前
+  renderList();
   renderUsage();
 }
 

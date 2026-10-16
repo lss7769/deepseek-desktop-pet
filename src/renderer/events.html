@@ -9,9 +9,23 @@
     <header>
       <span class="title">小鲸日记</span>
       <span class="actions">
+        <button id="export" title="导出当前筛选结果">导出</button>
         <button id="clear" title="清空全部日记（不影响聊天记录）">清空日记</button>
       </span>
     </header>
+
+    <section class="filter-bar">
+      <select id="filter-type">
+        <option value="">全部类型</option>
+        <option value="chat">聊天</option>
+        <option value="tool">工具</option>
+        <option value="fs">文件操作</option>
+        <option value="error">错误</option>
+        <option value="system">系统</option>
+      </select>
+      <input id="filter-q" type="text" placeholder="搜索日记内容…" />
+      <span id="filter-count" class="filter-count"></span>
+    </section>
 
     <section class="usage-card">
       <div class="usage-head">
