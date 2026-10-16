@@ -348,17 +348,65 @@ async function distillHistory(key) {
 }
 
 // ---------- v4-pro 智能路由 ----------
+// 技术/代码/算法类：走 pro（需要强推理）
 const COMPLEX_KEYWORDS = [
   '代码', '函数', '算法', 'bug', '报错', '怎么写', '实现', '解释',
   '原理', '为什么', '区别', '优化', '数据结构', '递归', '复杂度',
-  '代码', '编译', '调试', '性能', '架构'
+  '编译', '调试', '性能', '架构', '数据库', 'sql', '正则',
+  '指针', '内存', '并发', '线程', '协议', '加密', '哈希'
 ];
+
+// 创作/长文本/翻译类：走 pro（需要生成质量）
+const CREATIVE_KEYWORDS = [
+  '写一下', '帮我写', '作文', '总结', '概括', '翻译', '英文',
+  '报告', '方案', '计划', '简历', '邮件', '演讲稿', '论文',
+  '扩写', '缩写', '改写', '润色', '起草', '撰写'
+];
+
+// 文件操作类：走 flash（走工具调用，不需要强推理）
+const FILE_OP_KEYWORDS = [
+  '整理', '归类', '分类', '移动', '复制', '删除', '找文件',
+  '搜索', '列出', '读取', '打开', '备份', '恢复'
+];
+
+// 简单问答/闲聊：走 flash（便宜）
+const CHAT_PATTERNS = [
+  /^(在吗|你好|嗨|早上好|晚上好|晚安|谢谢|再见|拜拜|哈哈|呵呵|嗯|哦|啊|唉)$/,
+  /^(你是谁|你叫什么|你多大了|你来自哪里|你会什么)/,
+  /^(今天|明天|昨天).*(天气|温度|日期|星期)/,
+  /^(讲个笑话|来个段子|唱首歌|跳个舞)/
+];
+
+function isSimpleChat(text) {
+  const t = String(text).trim();
+  if (t.length > 20) return false;
+  return CHAT_PATTERNS.some(p => p.test(t));
+}
+
+function hasAny(text, keywords) {
+  const t = String(text);
+  return keywords.some(k => t.includes(k));
+}
 
 function pickModel(message, deepMode) {
   if (deepMode) return 'deepseek-v4-pro';
-  const len = String(message).length;
-  const complex = COMPLEX_KEYWORDS.some(k => String(message).includes(k));
-  if (len > 60 || complex) return 'deepseek-v4-pro';
+  const text = String(message);
+  const len = text.length;
+
+  // 文件操作走 flash（工具调用，不需要强推理）
+  if (hasAny(text, FILE_OP_KEYWORDS)) return 'deepseek-v4-flash';
+
+  // 简单闲聊走 flash
+  if (isSimpleChat(text)) return 'deepseek-v4-flash';
+
+  // 技术/创作类走 pro
+  if (hasAny(text, COMPLEX_KEYWORDS)) return 'deepseek-v4-pro';
+  if (hasAny(text, CREATIVE_KEYWORDS)) return 'deepseek-v4-pro';
+
+  // 长消息默认 pro
+  if (len > 60) return 'deepseek-v4-pro';
+
+  // 其他走 flash
   return 'deepseek-v4-flash';
 }
 
