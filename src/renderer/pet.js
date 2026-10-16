@@ -11,6 +11,18 @@ const keyBar = document.getElementById('key-bar');
 const keyInput = document.getElementById('key-input');
 const keySave = document.getElementById('key-save');
 
+// 右下角小状态条（显示当前模型/token）
+const statusLine = document.createElement('div');
+statusLine.id = 'status-line';
+document.body.appendChild(statusLine);
+let statusTimer = null;
+function setStatusLine(text) {
+  statusLine.textContent = text;
+  statusLine.style.opacity = '0.7';
+  if (statusTimer) clearTimeout(statusTimer);
+  statusTimer = setTimeout(() => { statusLine.style.opacity = '0'; }, 4000);
+}
+
 const QUOTES = [
   '我在这儿呢～',
   '今天也要好好学 C 语言哦',
@@ -209,15 +221,19 @@ canvas.addEventListener('contextmenu', (e) => {
 });
 
 // ---------- 聊天 ----------
-function openChat() {
+let forceFlash = false; // Flash 快聊模式：固定用 v4-flash
+function openChat(opts) {
+  forceFlash = !!(opts && opts.forceFlash);
   chatOpen = true;
   chatBar.classList.remove('hidden');
   chatInput.value = '';
+  chatInput.placeholder = forceFlash ? 'v4-flash 快聊…（省钱又快）' : '想说点什么？';
   chatInput.focus();
   setIgnore(false);
 }
 function closeChat() {
   chatOpen = false;
+  forceFlash = false;
   chatBar.classList.add('hidden');
   if (!keyOpen) setIgnore(true);
 }
@@ -227,9 +243,15 @@ async function sendChat() {
   if (!msg) return;
   chatInput.value = '';
   showBubble('……');
-  const r = await window.petAPI.chat(msg);
+  const opts = forceFlash ? { forceModel: 'deepseek-v4-flash' } : undefined;
+  const r = await window.petAPI.chat(msg, opts);
   if (r.ok) {
     say(r.content, 6000);
+    // 右下角小字显示用了哪个模型 + 本次 token
+    if (r.meta) {
+      const modelName = r.meta.model.includes('pro') ? 'v4-pro' : 'v4-flash';
+      setStatusLine(`${modelName} · ${r.meta.tokens} tok`);
+    }
   } else {
     say(errorReply(r.error, r.status), 5000);
   }
@@ -239,6 +261,7 @@ function errorReply(err, status) {
   if (err === 'no_key') return '你还没告诉我 API Key 呢，右键「设置 API Key」吧～';
   if (err === 'api_status') {
     if (status === 401) return '这个 Key 好像不对哦，再检查一下？';
+    if (status === 402) return '账户没钱啦，去 DeepSeek 平台充点值吧～';
     if (status === 404) return '模型地址不对…等我修修。';
     if (status === 429) return '问得太急啦，让我喘口气…';
     return `接口开小差了（${status}），等会儿再试`;
@@ -282,8 +305,10 @@ document.addEventListener('keydown', (e) => {
 
 // ---------- 主进程事件 ----------
 window.petAPI.onOpenChat(() => { closeKey(); openChat(); });
+window.petAPI.onOpenChatFlash(() => { closeKey(); openChat({ forceFlash: true }); });
 window.petAPI.onSetKey(() => { closeChat(); openKey(); });
 window.petAPI.onSayRandom(() => say(randomQuote()));
+window.petAPI.onSay((text) => say(text));
 window.petAPI.onSetMuted((m) => {
   muted = m;
   if (muted && currentAudio) { currentAudio.pause(); currentAudio = null; }

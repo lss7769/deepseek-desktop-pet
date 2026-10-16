@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, screen } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, screen, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
@@ -16,6 +16,7 @@ const DEFAULT_SYSTEM_PROMPT =
   '不要列表、不要解释、直接像朋友一样回话。';
 
 let win = null;
+let chatWin = null;
 let muted = false;
 
 // ---------- 配置 ----------
@@ -31,6 +32,107 @@ function loadConfig() {
 
 function saveConfig(cfg) {
   fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2));
+}
+
+// ---------- API Key 加密（Windows DPAPI，绑定当前用户账户） ----------
+// 存 base64(加密串)；旧版明文 sk-... 首次读取时自动迁移
+function getApiKey(cfg) {
+  const k = cfg.deepseekApiKey;
+  if (!k) return null;
+  if (k.startsWith('sk-')) {
+    try {
+      const enc = safeStorage.encryptString(k).toString('base64');
+      saveConfig({ ...cfg, deepseekApiKey: enc });
+    } catch { /* 加密失败就先用明文 */ }
+    return k;
+  }
+  try {
+    return safeStorage.decryptString(Buffer.from(k, 'base64'));
+  } catch {
+    return null;
+  }
+}
+
+// ---------- Token 用量统计（按月重置） ----------
+const DEFAULT_MONTHLY_BUDGET = 500000; // 默认月度预算 50 万 token
+
+function currentMonth() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function getUsage(cfg) {
+  const month = currentMonth();
+  let u = cfg.usage || {};
+  if (u.month !== month) {
+    u = { month, input: 0, output: 0 };
+  }
+  return u;
+}
+
+function addUsage(cfg, promptTokens, completionTokens) {
+  const u = getUsage(cfg);
+  u.input += promptTokens || 0;
+  u.output += completionTokens || 0;
+  saveConfig({ ...cfg, usage: u });
+  return u;
+}
+
+function budgetStatus(cfg) {
+  const u = getUsage(cfg);
+  const budget = cfg.monthlyBudget || DEFAULT_MONTHLY_BUDGET;
+  const total = u.input + u.output;
+  if (total >= budget) return { level: 'exceeded', total, budget };
+  if (total >= budget * 0.8) return { level: 'warn', total, budget };
+  return { level: 'ok', total, budget };
+}
+
+// ---------- 聊天记录（逐行 JSON 追加，便于导出/清理） ----------
+const historyPath = path.join(app.getPath('userData'), 'history.jsonl');
+
+function appendHistory(rec) {
+  const full = { ts: Date.now(), ...rec };
+  try {
+    fs.appendFileSync(historyPath, JSON.stringify(full) + '\n', 'utf8');
+  } catch { /* 记录失败不影响聊天 */ }
+  broadcast('pet:history-append', full);
+}
+
+function readHistory() {
+  try {
+    return fs.readFileSync(historyPath, 'utf8')
+      .split('\n').filter(Boolean)
+      .map(l => { try { return JSON.parse(l); } catch { return null; } })
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function clearHistory() {
+  try { fs.writeFileSync(historyPath, '', 'utf8'); } catch { /* ignore */ }
+}
+
+// 向所有窗口广播（聊天窗口可实时收到新记录）
+function broadcast(channel, ...args) {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed()) w.webContents.send(channel, ...args);
+  }
+}
+
+// ---------- v4-pro 智能路由 ----------
+const COMPLEX_KEYWORDS = [
+  '代码', '函数', '算法', 'bug', '报错', '怎么写', '实现', '解释',
+  '原理', '为什么', '区别', '优化', '数据结构', '递归', '复杂度',
+  '代码', '编译', '调试', '性能', '架构'
+];
+
+function pickModel(message, deepMode) {
+  if (deepMode) return 'deepseek-v4-pro';
+  const len = String(message).length;
+  const complex = COMPLEX_KEYWORDS.some(k => String(message).includes(k));
+  if (len > 60 || complex) return 'deepseek-v4-pro';
+  return 'deepseek-v4-flash';
 }
 
 // ---------- 窗口 ----------
@@ -68,6 +170,28 @@ function createWindow() {
   win.on('closed', () => { win = null; });
 }
 
+// ---------- 独立聊天窗口 ----------
+function openChatWindow() {
+  if (chatWin && !chatWin.isDestroyed()) { chatWin.show(); chatWin.focus(); return; }
+  chatWin = new BrowserWindow({
+    width: 440,
+    height: 620,
+    minWidth: 340,
+    minHeight: 420,
+    title: '和小鲸聊天',
+    backgroundColor: '#0d1b2e',
+    icon: path.join(__dirname, '..', 'src', 'assets', 'pet', 'whale-girl.ico'),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+  chatWin.setMenuBarVisibility(false);
+  chatWin.loadFile(path.join(__dirname, '..', 'src', 'renderer', 'chat.html'));
+  chatWin.on('closed', () => { chatWin = null; });
+}
+
 // ---------- IPC ----------
 ipcMain.on('pet:set-ignore-mouse', (_e, ignore) => {
   if (win && !win.isDestroyed()) win.setIgnoreMouseEvents(!!ignore, { forward: true });
@@ -82,9 +206,32 @@ ipcMain.on('pet:move-window', (_e, dx, dy) => {
 ipcMain.handle('pet:config-get', () => loadConfig());
 
 ipcMain.handle('pet:config-set', (_e, patch) => {
-  const cfg = { ...loadConfig(), ...patch };
-  saveConfig(cfg);
-  return cfg;
+  const cfg = loadConfig();
+  // 保存 Key 时用 DPAPI 加密
+  if (patch.deepseekApiKey) {
+    try {
+      patch.deepseekApiKey = safeStorage.encryptString(patch.deepseekApiKey).toString('base64');
+    } catch { /* 加密失败就明文存，自用可接受 */ }
+  }
+  const merged = { ...cfg, ...patch };
+  saveConfig(merged);
+  return merged;
+});
+
+// ---------- 聊天记录 & 聊天窗口 IPC ----------
+ipcMain.handle('pet:history-get', () => readHistory());
+
+ipcMain.handle('pet:history-clear', () => {
+  clearHistory();
+  broadcast('pet:history-clear');
+  return { ok: true };
+});
+
+ipcMain.on('pet:open-chat-window', () => openChatWindow());
+
+// 聊天窗口点历史里的回复 → 让桌宠重念一遍
+ipcMain.on('pet:replay', (_e, text) => {
+  if (win && !win.isDestroyed()) win.webContents.send('pet:say', String(text || ''));
 });
 
 // ---------- TTS（Edge 神经网络语音） ----------
@@ -128,11 +275,26 @@ ipcMain.handle('pet:tts', async (_e, text) => {
   }
 });
 
-// 调用 DeepSeek v4-flash；错误不泄漏密钥，只返回错误类型
-ipcMain.handle('pet:chat', async (_e, message) => {
+// 调用 DeepSeek：v4-flash / v4-pro 智能路由 + token 统计 + 预算控制
+// opts.forceModel 可强制指定模型（如 'deepseek-v4-flash'）
+ipcMain.handle('pet:chat', async (_e, message, opts) => {
   const cfg = loadConfig();
-  const key = cfg.deepseekApiKey;
+  const key = getApiKey(cfg);
   if (!key) return { ok: false, error: 'no_key' };
+
+  const text = String(message).slice(0, 2000);
+  const deepMode = !!cfg.deepMode;
+  let model = opts?.forceModel || pickModel(text, deepMode);
+
+  // 预算超了就强制 flash（更便宜），并提示用户
+  const bs = budgetStatus(cfg);
+  if (bs.level === 'exceeded' && model !== 'deepseek-v4-flash') {
+    model = 'deepseek-v4-flash';
+  }
+
+  // 记录并广播用户消息（聊天窗口实时显示）
+  appendHistory({ role: 'user', text });
+
   try {
     const res = await fetch('https://api.deepseek.com/chat/completions', {
       method: 'POST',
@@ -141,20 +303,47 @@ ipcMain.handle('pet:chat', async (_e, message) => {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'deepseek-v4-flash',
+        model,
         messages: [
           { role: 'system', content: cfg.systemPrompt || DEFAULT_SYSTEM_PROMPT },
-          { role: 'user', content: String(message).slice(0, 2000) }
+          { role: 'user', content: text }
         ],
         temperature: 0.85,
-        max_tokens: 300
+        max_tokens: 800
       })
     });
     if (!res.ok) return { ok: false, error: 'api_status', status: res.status };
     const data = await res.json();
     const content = data?.choices?.[0]?.message?.content;
     if (!content) return { ok: false, error: 'empty' };
-    return { ok: true, content: content.trim() };
+
+    // 累加 token 用量
+    const usage = data?.usage || {};
+    const u = addUsage(cfg, usage.prompt_tokens, usage.completion_tokens);
+    const total = u.input + u.output;
+    const budget = cfg.monthlyBudget || DEFAULT_MONTHLY_BUDGET;
+
+    // 记录并广播小鲸的回复
+    appendHistory({
+      role: 'pet',
+      text: content.trim(),
+      model,
+      tokens: usage.total_tokens || (usage.prompt_tokens + usage.completion_tokens) || 0
+    });
+
+    console.log(`[chat] model=${model} tokens=${usage.total_tokens} monthTotal=${total}/${budget}`);
+
+    return {
+      ok: true,
+      content: content.trim(),
+      meta: {
+        model,
+        tokens: usage.total_tokens || (usage.prompt_tokens + usage.completion_tokens) || 0,
+        monthUsage: total,
+        budget,
+        budgetLevel: budgetStatus(loadConfig()).level
+      }
+    };
   } catch {
     return { ok: false, error: 'network' };
   }
@@ -164,8 +353,16 @@ function showContextMenu() {
   if (!win || win.isDestroyed()) return;
   const cfg = loadConfig();
   const currentVoice = cfg.ttsVoice || DEFAULT_VOICE;
+  const bs = budgetStatus(cfg);
+  const u = getUsage(cfg);
+  const total = u.input + u.output;
+  const budget = cfg.monthlyBudget || DEFAULT_MONTHLY_BUDGET;
+  const pct = Math.round((total / budget) * 100);
+  const usageLabel = `本月用量：${total.toLocaleString()} / ${budget.toLocaleString()} token（${pct}%）`;
   Menu.buildFromTemplate([
     { label: '和我聊天…', click: () => win.webContents.send('pet:open-chat') },
+    { label: 'Flash 快聊…（v4-flash）', click: () => win.webContents.send('pet:open-chat-flash') },
+    { label: '打开聊天窗口…', click: () => openChatWindow() },
     { label: '设置 API Key…', click: () => win.webContents.send('pet:set-key') },
     {
       label: '换个声音',
@@ -182,7 +379,23 @@ function showContextMenu() {
     },
     { label: muted ? '取消静音' : '静音', click: () => { muted = !muted; win.webContents.send('pet:set-muted', muted); } },
     { type: 'separator' },
+    {
+      label: '深度模式（v4-pro）',
+      type: 'checkbox',
+      checked: !!cfg.deepMode,
+      click: (item) => {
+        saveConfig({ ...loadConfig(), deepMode: item.checked });
+        win.webContents.send('pet:say', item.checked ? '好的，我会用更聪明的 v4-pro 回答～' : '切回省电模式啦');
+      }
+    },
+    {
+      label: usageLabel,
+      enabled: false,
+      click: () => {}
+    },
+    { type: 'separator' },
     { label: '再来一句', click: () => win.webContents.send('pet:say-random') },
+    { label: '清空聊天记录', click: () => { clearHistory(); broadcast('pet:history-clear'); } },
     { type: 'separator' },
     { label: '退出', click: () => app.quit() }
   ]).popup({ window: win });
