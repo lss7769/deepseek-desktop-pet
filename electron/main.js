@@ -1137,7 +1137,7 @@ function openChatWindow() {
     minWidth: 340,
     minHeight: 420,
     title: '和小鲸聊天',
-    backgroundColor: '#0d1b2e',
+    backgroundColor: '#eef4fd',
     icon: path.join(__dirname, '..', 'src', 'assets', 'pet', 'whale-girl.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -1322,6 +1322,11 @@ ipcMain.handle('pet:fs-restore', async (_e, srcPath) => {
   const item = log.find(it => it.src === srcPath && !it.restored);
   if (!item) return { ok: false, error: '没有找到这条删除记录' };
 
+  // 恢复前重新校验：原路径仍须落在当前授权（可写）目录内，防止授权范围变更后越权写回
+  const rv = fsSafe.resolveInRoots(item.src, currentRoots());
+  if (!rv.ok) return { ok: false, error: '原路径已不在授权目录里，不能恢复：' + rv.error };
+  if (rv.root.mode !== 'rw') return { ok: false, error: '原路径所在目录现在是只读的，不能恢复' };
+
   // 检查原路径是否被占用
   if (fs.existsSync(item.src)) {
     return { ok: false, error: '原路径已被占用，请先移开或重命名' };
@@ -1339,6 +1344,7 @@ ipcMain.handle('pet:fs-restore', async (_e, srcPath) => {
     }
     item.restored = true;
     saveRecycleLog(log);
+    cleanupEmptyBackupDirs(); // 顺带清掉恢复后遗留的空时间戳目录
     logEvent('fs_restore', { name: path.basename(item.src), path: item.src });
     return { ok: true, path: item.src };
   } catch (e) {
@@ -1346,14 +1352,14 @@ ipcMain.handle('pet:fs-restore', async (_e, srcPath) => {
   }
 });
 
-// 清理空备份目录（恢复后）
+// 清理空备份目录（恢复后调用；非空目录 rm 会直接失败跳过，不会误删备份）
 async function cleanupEmptyBackupDirs() {
   try {
     const dirs = await fs.promises.readdir(recycleBackupDir);
     for (const d of dirs) {
       const full = path.join(recycleBackupDir, d);
       const items = await fs.promises.readdir(full);
-      if (!items.length) await fs.promises.rmdir(full);
+      if (!items.length) await fs.promises.rm(full);
     }
   } catch { /* ignore */ }
 }
