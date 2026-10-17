@@ -1073,11 +1073,61 @@ function stopWalk() {
   walkTarget = null;
 }
 
-// 走到当前鼠标位置（右键直接触发，无需开模式）
-function walkToCursor() {
-  const cursor = screen.getCursorScreenPoint();
-  startWalkTo(cursor.x - WIN_W / 2, cursor.y - WIN_H + 60);
+// 点选目标位置：全屏透明覆盖层拦截下一次点击（无需原生全局鼠标钩子）
+let pickWindows = [];
+
+function closePickWindows() {
+  pickWindows.forEach(w => { if (w && !w.isDestroyed()) w.destroy(); });
+  pickWindows = [];
 }
+
+function chooseWalkTarget() {
+  if (pickWindows.length) return; // 已在点选模式，不重复弹层
+
+  screen.getAllDisplays().forEach(display => {
+    const b = display.bounds;
+    const pw = new BrowserWindow({
+      x: b.x,
+      y: b.y,
+      width: b.width,
+      height: b.height,
+      frame: false,
+      transparent: true,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      resizable: false,
+      movable: false,
+      fullscreenable: false,
+      enableLargerThanScreen: true,
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.js'),
+        contextIsolation: true,
+        nodeIntegration: false
+      }
+    });
+    pw.setAlwaysOnTop(true, 'screen-saver');
+    pw.loadFile(path.join(__dirname, '..', 'src', 'renderer', 'capture.html'), {
+      hash: `${b.x},${b.y}`
+    });
+    // Esc 取消
+    pw.webContents.on('before-input-event', (_e, input) => {
+      if (input.type === 'keyDown' && input.key === 'Escape') closePickWindows();
+    });
+    pickWindows.push(pw);
+  });
+}
+
+ipcMain.on('pet:walk-pick', (_e, clientX, clientY) => {
+  if (!pickWindows.length) return;
+  // 找到点击发生在哪个覆盖层，用其 display 原点换算成全局屏幕坐标
+  const senderWin = BrowserWindow.fromWebContents(_e.sender);
+  const origin = pickWindows.indexOf(senderWin) >= 0 ? senderWin.getPosition() : [0, 0];
+  const sx = origin[0] + clientX;
+  const sy = origin[1] + clientY;
+  closePickWindows();
+  // 让小鲸脚底落在点击点附近（沿用窗口偏移约定）
+  startWalkTo(sx - WIN_W / 2, sy - WIN_H + 60);
+});
 
 // ---------- 独立聊天窗口 ----------
 function openChatWindow() {
@@ -1696,7 +1746,7 @@ function showContextMenu() {
     {
       label: '互动',
       submenu: [
-        { label: '走到鼠标位置', click: () => walkToCursor() },
+        { label: '走到指定位置…', click: () => chooseWalkTarget() },
         { label: '再来一句', click: () => win.webContents.send('pet:say-random') }
       ]
     },
@@ -1738,7 +1788,6 @@ function showContextMenu() {
       ]
     },
     { type: 'separator' },
-    { label: '清空聊天记录', click: () => { clearHistory(); logEvent('clear'); broadcast('pet:history-clear'); } },
     { label: '退出', click: () => app.quit() }
   ]).popup({ window: win });
 }

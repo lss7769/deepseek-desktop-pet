@@ -45,5 +45,6 @@ contextBridge.exposeInMainWorld('petAPI', {
   onEventClear: (cb) => ipcRenderer.on('pet:events-clear', () => cb()),
   onIndexProgress: (cb) => ipcRenderer.on('pet:index-progress', (_e, st) => cb(st)),
   onWalkStart: (cb) => ipcRenderer.on('pet:walk-start', () => cb()),
-  onWalkEnd: (cb) => ipcRenderer.on('pet:walk-end', () => cb())
+  onWalkEnd: (cb) => ipcRenderer.on('pet:walk-end', () => cb()),
+  pickWalkPoint: (x, y) => ipcRenderer.send('pet:walk-pick', x, y)
 });
