@@ -1381,7 +1381,7 @@ ipcMain.handle('pet:tts', async (_e, text) => {
 ipcMain.handle('pet:pick-image', async (_e) => {
   const res = await dialog.showOpenDialog({
     title: '选择图片',
-    filters: [{ name: '图片', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'] }],
+    filters: [{ name: '图片', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'] }],
     properties: ['openFile']
   });
   if (res.canceled || !res.filePaths.length) return { ok: false };
@@ -1391,7 +1391,7 @@ ipcMain.handle('pet:pick-image', async (_e) => {
     if (stat.size > 8 * 1024 * 1024) return { ok: false, error: 'image_too_large' };
     const buf = fs.readFileSync(fpath);
     const ext = path.extname(fpath).toLowerCase();
-    const MIME_MAP = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp' };
+    const MIME_MAP = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp' };
     return { ok: true, data: buf.toString('base64'), mime: MIME_MAP[ext] || 'image/png', name: path.basename(fpath) };
   } catch { return { ok: false, error: 'read_fail' }; }
 });
@@ -1551,8 +1551,8 @@ ipcMain.handle('pet:chat', async (_e, message, opts) => {
   const deepMode = !!cfg.deepMode;
   let model = opts?.forceModel || pickModel(text, deepMode);
 
-  // 图片消息强制走 v4-pro（多模态需要更强模型）
-  if (imageMode) model = 'deepseek-v4-pro';
+  // 图片消息走 deepseek-flash（官方文档：仅该模型支持 vision，v4-pro 不支持）
+  if (imageMode) model = 'deepseek-flash';
 
   // 预算超了就强制 flash（更便宜），并提示用户
   const bs = budgetStatus(cfg);
