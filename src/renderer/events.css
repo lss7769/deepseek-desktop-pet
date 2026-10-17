@@ -1,9 +1,14 @@
 :root {
-  --bg: #0d1b2e;
-  --panel: #13253d;
-  --text: #eaf2ff;
-  --muted: #8aa4c8;
-  --accent: #4aa3ff;
+  --bg: #eef4fd;
+  --bg-soft: #f7faff;
+  --panel: #ffffff;
+  --ink: #1d3557;
+  --muted: #8aa0bd;
+  --line: #e3ecf8;
+  --blue: #4b8bf5;
+  --blue-deep: #3a78e0;
+  --blue-soft: #e8f1ff;
+  --shadow-sm: 0 2px 8px rgba(45, 92, 168, 0.08);
 }
 
 * { box-sizing: border-box; }
@@ -12,63 +17,83 @@ html, body { height: 100%; margin: 0; }
 body {
   display: flex;
   flex-direction: column;
-  background: var(--bg);
-  color: var(--text);
-  font-family: "Microsoft YaHei", system-ui, sans-serif;
+  background:
+    radial-gradient(1200px 500px at 80% -10%, #dceaff 0%, transparent 60%),
+    var(--bg);
+  color: var(--ink);
+  font-family: "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
   font-size: 14px;
 }
 
+/* ---------- 顶部栏 ---------- */
 header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 14px;
-  background: var(--panel);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
 }
-header .title { font-weight: 600; letter-spacing: 0.5px; }
+header .title { font-weight: 700; font-size: 15px; letter-spacing: 0.3px; }
+header .actions { display: flex; gap: 6px; }
 header .actions button {
-  background: none;
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: var(--bg-soft);
+  border: 1px solid transparent;
   color: var(--muted);
-  border-radius: 6px;
-  padding: 4px 10px;
+  border-radius: 999px;
+  padding: 5px 12px;
   cursor: pointer;
   font-size: 12px;
+  transition: all 0.15s ease;
 }
-header .actions button:hover { color: var(--text); border-color: var(--accent); }
+header .actions button:hover {
+  color: var(--blue-deep);
+  background: var(--blue-soft);
+  border-color: #cfe0fb;
+}
 
 /* ---------- 筛选栏 ---------- */
 .filter-bar {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 10px 14px 0;
+  margin: 12px 14px 0;
   padding: 8px 10px;
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--panel);
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-sm);
 }
 .filter-bar select {
-  background: var(--bg);
-  color: var(--text);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 6px;
-  padding: 4px 8px;
+  background: var(--bg-soft);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 10px;
   font-size: 12px;
   outline: none;
+  cursor: pointer;
 }
+.filter-bar select:focus { border-color: #b9d3fb; }
 .filter-bar input {
   flex: 1;
-  background: var(--bg);
-  color: var(--text);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 6px;
-  padding: 4px 8px;
+  min-width: 0;
+  background: var(--bg-soft);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 12px;
   font-size: 12px;
   outline: none;
+  transition: all 0.15s ease;
 }
-.filter-bar input:focus { border-color: var(--accent); }
+.filter-bar input::placeholder { color: #a9bbd4; }
+.filter-bar input:focus {
+  border-color: #b9d3fb;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(75, 139, 245, 0.1);
+}
 .filter-count {
   font-size: 11px;
   color: var(--muted);
@@ -77,11 +102,12 @@ header .actions button:hover { color: var(--text); border-color: var(--accent); 
 
 /* ---------- 用量卡片 ---------- */
 .usage-card {
-  margin: 14px 14px 0;
-  padding: 13px 14px;
-  border-radius: 12px;
+  margin: 12px 14px 0;
+  padding: 14px 16px;
+  border-radius: 14px;
   background: var(--panel);
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-sm);
 }
 .usage-head {
   display: flex;
@@ -90,23 +116,23 @@ header .actions button:hover { color: var(--text); border-color: var(--accent); 
   font-size: 12px;
   color: var(--muted);
 }
-#usage-num { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+#usage-num { color: var(--ink); font-weight: 700; font-variant-numeric: tabular-nums; }
 .bar {
-  height: 7px;
-  margin: 10px 0 8px;
-  border-radius: 4px;
-  background: #0b1726;
+  height: 8px;
+  margin: 11px 0 9px;
+  border-radius: 999px;
+  background: #edf2f9;
   overflow: hidden;
 }
 .bar-fill {
   height: 100%;
   width: 0;
-  border-radius: 4px;
-  background: var(--accent);
+  border-radius: 999px;
+  background: linear-gradient(90deg, #4b8bf5, #6aa6ff);
   transition: width 0.3s ease;
 }
-.bar-fill.warn { background: #ffa94d; }
-.bar-fill.exceeded { background: #ff7b7b; }
+.bar-fill.warn { background: linear-gradient(90deg, #f59430, #ffb066); }
+.bar-fill.exceeded { background: linear-gradient(90deg, #e85a78, #f47b93); }
 .usage-foot {
   display: flex;
   justify-content: space-between;
@@ -125,15 +151,18 @@ main {
   flex-direction: column;
   gap: 2px;
 }
+main::-webkit-scrollbar { width: 8px; }
+main::-webkit-scrollbar-thumb { background: #c9daf2; border-radius: 999px; }
+main::-webkit-scrollbar-track { background: transparent; }
 
 .ev {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 7px 8px;
-  border-radius: 8px;
+  padding: 7px 10px;
+  border-radius: 10px;
 }
-.ev:hover { background: rgba(255, 255, 255, 0.03); }
+.ev:hover { background: rgba(75, 139, 245, 0.07); }
 
 .dot {
   flex: 0 0 auto;
@@ -142,14 +171,14 @@ main {
   border-radius: 50%;
   background: var(--muted);
 }
-.dot-blue { background: #4aa3ff; }
-.dot-red { background: #ff7b7b; }
-.dot-purple { background: #b98cff; }
-.dot-cyan { background: #4ad9d9; }
-.dot-green { background: #57d68d; }
-.dot-orange { background: #ffa94d; }
-.dot-teal { background: #35c6a8; }
-.dot-gray { background: #8aa4c8; }
+.dot-blue { background: #4b8bf5; }
+.dot-red { background: #e85a78; }
+.dot-purple { background: #9a74e8; }
+.dot-cyan { background: #2bb7c9; }
+.dot-green { background: #34b96f; }
+.dot-orange { background: #f59430; }
+.dot-teal { background: #1fb39b; }
+.dot-gray { background: #9db2d0; }
 
 .ev-text {
   flex: 1;
@@ -164,4 +193,11 @@ main {
   font-variant-numeric: tabular-nums;
 }
 
-.empty { margin: auto; color: var(--muted); font-size: 13px; }
+.empty {
+  margin: auto;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+  line-height: 2;
+}
+.empty::before { content: "🐳"; display: block; font-size: 40px; margin-bottom: 6px; }

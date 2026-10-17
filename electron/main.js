@@ -1161,7 +1161,7 @@ function openEventsWindow() {
     minWidth: 360,
     minHeight: 400,
     title: '小鲸日记',
-    backgroundColor: '#0d1b2e',
+    backgroundColor: '#eef4fd',
     icon: path.join(__dirname, '..', 'src', 'assets', 'pet', 'whale-girl.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -1185,7 +1185,7 @@ function openFileWindow() {
     minWidth: 380,
     minHeight: 480,
     title: '小鲸文件助手',
-    backgroundColor: '#0d1b2e',
+    backgroundColor: '#eef4fd',
     icon: path.join(__dirname, '..', 'src', 'assets', 'pet', 'whale-girl.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
