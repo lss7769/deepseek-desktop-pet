@@ -1084,37 +1084,36 @@ function closePickWindows() {
 function chooseWalkTarget() {
   if (pickWindows.length) return; // 已在点选模式，不重复弹层
 
-  screen.getAllDisplays().forEach(display => {
-    const b = display.bounds;
-    const pw = new BrowserWindow({
-      x: b.x,
-      y: b.y,
-      width: b.width,
-      height: b.height,
-      frame: false,
-      transparent: true,
-      alwaysOnTop: true,
-      skipTaskbar: true,
-      resizable: false,
-      movable: false,
-      fullscreenable: false,
-      enableLargerThanScreen: true,
-      webPreferences: {
-        preload: path.join(__dirname, 'preload.js'),
-        contextIsolation: true,
-        nodeIntegration: false
-      }
-    });
-    pw.setAlwaysOnTop(true, 'screen-saver');
-    pw.loadFile(path.join(__dirname, '..', 'src', 'renderer', 'capture.html'), {
-      hash: `${b.x},${b.y}`
-    });
-    // Esc 取消
-    pw.webContents.on('before-input-event', (_e, input) => {
-      if (input.type === 'keyDown' && input.key === 'Escape') closePickWindows();
-    });
-    pickWindows.push(pw);
+  // 只在鼠标当前所在屏幕开覆盖层，避免多显示器/缩放下错位
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const b = display.bounds;
+  const pw = new BrowserWindow({
+    x: b.x,
+    y: b.y,
+    width: b.width,
+    height: b.height,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    movable: false,
+    fullscreenable: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
   });
+  pw.setAlwaysOnTop(true, 'screen-saver');
+  pw.loadFile(path.join(__dirname, '..', 'src', 'renderer', 'capture.html'), {
+    hash: `${b.x},${b.y}`
+  });
+  // Esc 取消
+  pw.webContents.on('before-input-event', (_e, input) => {
+    if (input.type === 'keyDown' && input.key === 'Escape') closePickWindows();
+  });
+  pickWindows.push(pw);
 }
 
 ipcMain.on('pet:walk-pick', (_e, clientX, clientY) => {
