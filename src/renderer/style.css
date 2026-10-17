@@ -34,14 +34,14 @@ body {
   top: 6px;
   left: 12px;
   right: 12px;
-  padding: 8px 12px;
-  background: rgba(255, 255, 255, 0.96);
-  border: 2px solid #4b8bf5;
-  border-radius: 14px;
-  color: #12304f;
-  font-size: 14px;
-  line-height: 1.4;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  padding: 9px 13px;
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid #d4e4fb;
+  border-radius: 16px;
+  color: #1d3557;
+  font-size: 13.5px;
+  line-height: 1.45;
+  box-shadow: 0 8px 24px rgba(45, 92, 168, 0.18);
   pointer-events: none;
   transition: opacity 0.15s ease;
   word-break: break-word;
@@ -54,13 +54,26 @@ body {
 #bubble::after {
   content: "";
   position: absolute;
-  bottom: -9px;
-  left: 30px;
+  bottom: -7px;
+  left: 28px;
   width: 0;
   height: 0;
-  border-left: 9px solid transparent;
-  border-right: 9px solid transparent;
-  border-top: 9px solid #4b8bf5;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-top: 8px solid #d4e4fb;
+}
+
+#bubble::before {
+  content: "";
+  position: absolute;
+  bottom: -5.5px;
+  left: 29px;
+  width: 0;
+  height: 0;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-top: 7px solid rgba(255, 255, 255, 0.97);
+  z-index: 1;
 }
 
 /* ---------- 输入条（聊天 / Key） ---------- */
@@ -72,11 +85,11 @@ body {
   bottom: 6px;
   display: flex;
   gap: 6px;
-  background: rgba(255, 255, 255, 0.95);
-  border: 2px solid #4b8bf5;
-  border-radius: 12px;
-  padding: 4px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid #d4e4fb;
+  border-radius: 999px;
+  padding: 3px 4px 3px 6px;
+  box-shadow: 0 6px 18px rgba(45, 92, 168, 0.2);
 }
 
 #chat-bar.hidden,
@@ -93,18 +106,35 @@ body {
   background: transparent;
   font-size: 13px;
   padding: 4px 6px;
-  color: #12304f;
+  color: #1d3557;
 }
+
+#chat-input::placeholder,
+#key-input::placeholder { color: #9db2d0; }
 
 #chat-send,
 #key-save {
   border: none;
-  background: #4b8bf5;
+  background: linear-gradient(135deg, #4b8bf5 0%, #6aa6ff 100%);
   color: #fff;
-  border-radius: 8px;
-  padding: 4px 12px;
+  border-radius: 999px;
+  padding: 5px 14px;
   font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
+  box-shadow: 0 2px 8px rgba(75, 139, 245, 0.35);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+#chat-send:hover,
+#key-save:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(75, 139, 245, 0.45);
+}
+
+#chat-send:active,
+#key-save:active {
+  transform: translateY(0);
 }
 
 #chat-image {
@@ -112,12 +142,13 @@ body {
   background: transparent;
   font-size: 15px;
   cursor: pointer;
-  padding: 2px 4px;
-  border-radius: 6px;
+  padding: 2px 5px;
+  border-radius: 999px;
+  transition: background 0.12s ease;
 }
 
 #chat-image:hover {
-  background: rgba(75, 139, 245, 0.15);
+  background: rgba(75, 139, 245, 0.14);
 }
 
 /* 图片预览条 */
@@ -125,17 +156,17 @@ body {
   position: absolute;
   left: 10px;
   right: 10px;
-  bottom: 46px;
+  bottom: 44px;
   display: flex;
   align-items: center;
   gap: 6px;
-  background: rgba(255, 255, 255, 0.95);
-  border: 2px solid #4b8bf5;
-  border-radius: 10px;
-  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid #d4e4fb;
+  border-radius: 12px;
+  padding: 5px 10px;
   font-size: 12px;
-  color: #12304f;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  color: #1d3557;
+  box-shadow: 0 6px 16px rgba(45, 92, 168, 0.16);
 }
 
 #image-preview.hidden {
@@ -152,14 +183,11 @@ body {
 #image-preview-remove {
   border: none;
   background: transparent;
-  color: #c44569;
+  color: #d06a86;
   font-size: 14px;
   cursor: pointer;
   padding: 0 4px;
   line-height: 1;
 }
 
-#chat-send:hover,
-#key-save:hover {
-  background: #3a78e0;
-}
+#image-preview-remove:hover { color: #e05a7a; }

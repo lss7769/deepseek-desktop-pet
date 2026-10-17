@@ -1687,47 +1687,58 @@ function showContextMenu() {
   const usageLabel = `本月用量：${total.toLocaleString()} / ${budget.toLocaleString()} token（${pct}%）`;
   Menu.buildFromTemplate([
     { label: '和我聊天…', click: () => win.webContents.send('pet:open-chat') },
-    { label: 'Flash 快聊…（v4-flash）', click: () => win.webContents.send('pet:open-chat-flash') },
+    { label: 'Flash 快聊…', click: () => win.webContents.send('pet:open-chat-flash') },
     { label: '打开聊天窗口…', click: () => openChatWindow() },
+    { type: 'separator' },
     { label: '小鲸日记…', click: () => openEventsWindow() },
-    { label: '文件助手…（找文件）', click: () => openFileWindow() },
-    { label: '设置 API Key…', click: () => win.webContents.send('pet:set-key') },
+    { label: '文件助手…', click: () => openFileWindow() },
+    { type: 'separator' },
     {
-      label: '换个声音',
-      submenu: TTS_VOICES.map(v => ({
-        label: v.name,
-        type: 'radio',
-        checked: v.id === currentVoice,
-        click: () => {
-          saveConfig({ ...loadConfig(), ttsVoice: v.id });
-          ttsInstance = null; // 下次用新声音重建
-          logEvent('voice', { voice: v.id, name: v.name });
-          win.webContents.send('pet:voice-changed');
+      label: '互动',
+      submenu: [
+        { label: '走到鼠标位置', click: () => walkToCursor() },
+        { label: '再来一句', click: () => win.webContents.send('pet:say-random') }
+      ]
+    },
+    {
+      label: '设置',
+      submenu: [
+        { label: '设置 API Key…', click: () => win.webContents.send('pet:set-key') },
+        {
+          label: '换个声音',
+          submenu: TTS_VOICES.map(v => ({
+            label: v.name,
+            type: 'radio',
+            checked: v.id === currentVoice,
+            click: () => {
+              saveConfig({ ...loadConfig(), ttsVoice: v.id });
+              ttsInstance = null; // 下次用新声音重建
+              logEvent('voice', { voice: v.id, name: v.name });
+              win.webContents.send('pet:voice-changed');
+            }
+          }))
+        },
+        { label: muted ? '取消静音' : '静音', click: () => { muted = !muted; win.webContents.send('pet:set-muted', muted); } },
+        { type: 'separator' },
+        {
+          label: '深度模式（v4-pro）',
+          type: 'checkbox',
+          checked: !!cfg.deepMode,
+          click: (item) => {
+            saveConfig({ ...loadConfig(), deepMode: item.checked });
+            logEvent('deepMode', { on: !!item.checked });
+            win.webContents.send('pet:say', item.checked ? '好的，我会用更聪明的 v4-pro 回答～' : '切回省电模式啦');
+          }
+        },
+        {
+          label: usageLabel,
+          enabled: false,
+          click: () => {}
         }
-      }))
-    },
-    { label: muted ? '取消静音' : '静音', click: () => { muted = !muted; win.webContents.send('pet:set-muted', muted); } },
-    { label: '走到鼠标位置', click: () => walkToCursor() },
-    { type: 'separator' },
-    {
-      label: '深度模式（v4-pro）',
-      type: 'checkbox',
-      checked: !!cfg.deepMode,
-      click: (item) => {
-        saveConfig({ ...loadConfig(), deepMode: item.checked });
-        logEvent('deepMode', { on: !!item.checked });
-        win.webContents.send('pet:say', item.checked ? '好的，我会用更聪明的 v4-pro 回答～' : '切回省电模式啦');
-      }
-    },
-    {
-      label: usageLabel,
-      enabled: false,
-      click: () => {}
+      ]
     },
     { type: 'separator' },
-    { label: '再来一句', click: () => win.webContents.send('pet:say-random') },
     { label: '清空聊天记录', click: () => { clearHistory(); logEvent('clear'); broadcast('pet:history-clear'); } },
-    { type: 'separator' },
     { label: '退出', click: () => app.quit() }
   ]).popup({ window: win });
 }
