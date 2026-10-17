@@ -107,6 +107,58 @@ body {
   cursor: pointer;
 }
 
+#chat-image {
+  border: none;
+  background: transparent;
+  font-size: 15px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 6px;
+}
+
+#chat-image:hover {
+  background: rgba(75, 139, 245, 0.15);
+}
+
+/* 图片预览条 */
+#image-preview {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 46px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.95);
+  border: 2px solid #4b8bf5;
+  border-radius: 10px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: #12304f;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+#image-preview.hidden {
+  display: none;
+}
+
+#image-preview-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#image-preview-remove {
+  border: none;
+  background: transparent;
+  color: #c44569;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
 #chat-send:hover,
 #key-save:hover {
   background: #3a78e0;

@@ -10,8 +10,14 @@
 
     <!-- 聊天输入框 -->
     <div id="chat-bar" class="hidden">
+      <button id="chat-image" title="发送图片">📷</button>
       <input id="chat-input" type="text" placeholder="跟小鲸说点什么…" maxlength="200" />
       <button id="chat-send">发送</button>
+    </div>
+    <!-- 图片预览条 -->
+    <div id="image-preview" class="hidden">
+      <span id="image-preview-name"></span>
+      <button id="image-preview-remove">×</button>
     </div>
 
     <!-- API Key 输入框 -->

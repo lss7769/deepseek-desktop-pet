@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('petAPI', {
   moveWindow: (dx, dy) => ipcRenderer.send('pet:move-window', dx, dy),
   openContextMenu: () => ipcRenderer.send('pet:context-menu'),
   chat: (message, opts) => ipcRenderer.invoke('pet:chat', message, opts),
+  pickImage: () => ipcRenderer.invoke('pet:pick-image'),
   tts: (text) => ipcRenderer.invoke('pet:tts', text),
   getConfig: () => ipcRenderer.invoke('pet:config-get'),
   setConfig: (patch) => ipcRenderer.invoke('pet:config-set', patch),

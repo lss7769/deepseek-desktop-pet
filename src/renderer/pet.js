@@ -365,14 +365,17 @@ function closeChat() {
 
 async function sendChat() {
   const msg = chatInput.value.trim();
-  if (!msg) return;
+  if (!msg && !pendingImage) return;
   chatInput.value = '';
   showBubble('……');
-  const opts = forceFlash ? { forceModel: 'deepseek-v4-flash' } : undefined;
-  const r = await window.petAPI.chat(msg, opts);
+  const opts = forceFlash ? { forceModel: 'deepseek-v4-flash' } : {};
+  if (pendingImage) {
+    opts.image = pendingImage;
+    clearPendingImage();
+  }
+  const r = await window.petAPI.chat(msg || '看看这张图片', opts);
   if (r.ok) {
     say(r.content, 6000);
-    // 右下角小字显示用了哪个模型 + 本次 token
     if (r.meta) {
       const modelName = r.meta.model.includes('pro') ? 'v4-pro' : 'v4-flash';
       setStatusLine(`${modelName} · ${r.meta.tokens} tok`);
@@ -385,6 +388,8 @@ async function sendChat() {
 function errorReply(err, status) {
   if (err === 'no_key') return '你还没告诉我 API Key 呢，右键「设置 API Key」吧～';
   if (err === 'key_broken') return '我的 Key 好像失效了，右键重新设置一次吧～';
+  if (err === 'budget_image') return '本月预算不够看图啦…等下个月吧～';
+  if (err === 'image_unsupported') return '我的模型还看不懂图片，等升级吧～';
   if (err === 'api_status') {
     if (status === 401) return '这个 Key 好像不对哦，再检查一下？';
     if (status === 402) return '账户没钱啦，去 DeepSeek 平台充点值吧～';
@@ -395,6 +400,35 @@ function errorReply(err, status) {
   if (err === 'empty') return '我脑子空了一下，再说一遍？';
   return '网络断啦，我游不过去…';
 }
+
+// ---------- 图片附件 ----------
+let pendingImage = null;
+const imagePreview = document.getElementById('image-preview');
+const imagePreviewName = document.getElementById('image-preview-name');
+const imagePreviewRemove = document.getElementById('image-preview-remove');
+const chatImageBtn = document.getElementById('chat-image');
+
+function showImagePreview() {
+  imagePreviewName.textContent = pendingImage.name;
+  imagePreview.classList.remove('hidden');
+}
+function clearPendingImage() {
+  pendingImage = null;
+  imagePreview.classList.add('hidden');
+}
+
+chatImageBtn.addEventListener('click', async () => {
+  const r = await window.petAPI.pickImage();
+  if (!r.ok) return;
+  if (r.error === 'image_too_large') {
+    showBubble('图片太大了，8MB 以内的才能看哦', 2500);
+    return;
+  }
+  pendingImage = r;
+  showImagePreview();
+});
+
+imagePreviewRemove.addEventListener('click', clearPendingImage);
 
 chatSend.addEventListener('click', sendChat);
 chatInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendChat(); });

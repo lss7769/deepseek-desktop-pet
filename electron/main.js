@@ -1377,6 +1377,25 @@ ipcMain.handle('pet:tts', async (_e, text) => {
   }
 });
 
+// ---------- 图片选择 IPC ----------
+ipcMain.handle('pet:pick-image', async (_e) => {
+  const res = await dialog.showOpenDialog({
+    title: '选择图片',
+    filters: [{ name: '图片', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'] }],
+    properties: ['openFile']
+  });
+  if (res.canceled || !res.filePaths.length) return { ok: false };
+  const fpath = res.filePaths[0];
+  try {
+    const stat = fs.statSync(fpath);
+    if (stat.size > 8 * 1024 * 1024) return { ok: false, error: 'image_too_large' };
+    const buf = fs.readFileSync(fpath);
+    const ext = path.extname(fpath).toLowerCase();
+    const MIME_MAP = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp' };
+    return { ok: true, data: buf.toString('base64'), mime: MIME_MAP[ext] || 'image/png', name: path.basename(fpath) };
+  } catch { return { ok: false, error: 'read_fail' }; }
+});
+
 // ---------- 关键词硬编码：整理文件夹直接走代码，不依赖模型判断 ----------
 const ORGANIZE_WORDS = ['整理', '归类', '分类'];
 const FOLDER_WORDS = ['文件夹', '下载', '桌面', '文档', '目录'];
@@ -1474,6 +1493,23 @@ ipcMain.handle('pet:chat', async (_e, message, opts) => {
 
   const text = String(message).slice(0, 2000);
 
+  // 图片附件（多模态）
+  const image = opts?.image;
+  let userContent = text;
+  let historyText = text;
+  let imageMode = false;
+
+  if (image && image.data) {
+    const bs = budgetStatus(cfg);
+    if (bs.level === 'exceeded') return { ok: false, error: 'budget_image' };
+    imageMode = true;
+    userContent = [
+      { type: 'text', text: text || '看看这张图片' },
+      { type: 'image_url', image_url: { url: `data:${image.mime || 'image/png'};base64,${image.data}` } }
+    ];
+    historyText = (text ? text + ' ' : '') + '[图片]';
+  }
+
   // 关键词硬编码：整理文件夹直接走代码，不依赖模型判断
   if (detectOrganizeIntent(text)) {
     const dirKey = guessTargetDir(text);
@@ -1515,6 +1551,9 @@ ipcMain.handle('pet:chat', async (_e, message, opts) => {
   const deepMode = !!cfg.deepMode;
   let model = opts?.forceModel || pickModel(text, deepMode);
 
+  // 图片消息强制走 v4-pro（多模态需要更强模型）
+  if (imageMode) model = 'deepseek-v4-pro';
+
   // 预算超了就强制 flash（更便宜），并提示用户
   const bs = budgetStatus(cfg);
   if (bs.level === 'exceeded' && model !== 'deepseek-v4-flash') {
@@ -1528,19 +1567,19 @@ ipcMain.handle('pet:chat', async (_e, message, opts) => {
   }));
 
   // 记录并广播用户消息（聊天窗口实时显示）
-  appendHistory({ role: 'user', text });
+  appendHistory({ role: 'user', text: historyText });
 
   const messages = [
     { role: 'system', content: buildSystemPrompt(cfg) },
     ...historyMessages,
-    { role: 'user', content: text }
+    { role: 'user', content: userContent }
   ];
 
   let promptTokens = 0;
   let completionTokens = 0;
   let replyTokens = 0;
   const usedTools = [];
-  let toolsEnabled = true; // 模型若不支持工具，静默退回普通对话
+  let toolsEnabled = !imageMode; // 图片消息禁用工具（多模态+工具兼容性差）
 
   try {
     // 可能来回多轮：模型先要求调工具，拿到结果后再回答
@@ -1558,6 +1597,10 @@ ipcMain.handle('pet:chat', async (_e, message, opts) => {
       });
 
       if (!res.ok) {
+        if (imageMode && res.status === 400) {
+          logEvent('error', { code: 'image_unsupported' });
+          return { ok: false, error: 'image_unsupported' };
+        }
         if (toolsEnabled && res.status === 400) { toolsEnabled = false; continue; }
         logEvent('error', { code: 'api_status', status: res.status });
         return { ok: false, error: 'api_status', status: res.status };
